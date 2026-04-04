@@ -1,0 +1,34 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+pubspec.lock
+
+# Build outputs
+build/
+
+# Android
+android/.gradle/
+android/app/build/
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+
+# Windows
+windows/flutter/ephemeral/
+
+# macOS
+macos/Pods/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

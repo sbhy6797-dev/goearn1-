@@ -1,0 +1,718 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'dashboard_screen.dart';
+import 'payment_screen.dart';
+
+class SettingsScreen extends StatefulWidget {
+
+  final int totalCoins;
+
+  const SettingsScreen({super.key, required this.totalCoins});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  int totalCoins = 0;
+  late String referralCode;
+
+  final TextEditingController _friendCodeController = TextEditingController();
+
+  bool _usedReferral = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    referralCode =
+        FirebaseAuth.instance.currentUser!.uid.substring(0, 8).toUpperCase();
+
+    _loadCoins();
+    _saveReferralCode();
+    _checkIfUsedReferral();
+
+  }
+
+  // تحميل الرصيد من فايرستور
+  Future<void> _loadCoins() async {
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) return;
+
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    if (doc.exists) {
+
+      setState(() {
+        totalCoins = doc.data()?['totalCoins'] ?? 0;
+      });
+
+    }
+  }
+
+  // حفظ كود الإحالة فقط
+  Future<void> _saveReferralCode() async {
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user != null) {
+
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .set({
+
+        'referralCode': referralCode,
+
+      }, SetOptions(merge: true));
+
+    }
+  }
+
+  Future<void> _checkIfUsedReferral() async {
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) return;
+
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    if (doc.exists) {
+
+      setState(() {
+        _usedReferral = doc.data()?['usedReferral'] == true;
+      });
+
+    }
+  }
+
+  Future<void> _useFriendCode() async {
+
+    final user = FirebaseAuth.instance.currentUser;
+    final code = _friendCodeController.text.trim();
+
+    if (user == null || code.isEmpty) return;
+
+    if (code.length < 4) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid referral code')),
+      );
+      return;
+    }
+// 🔥 حطه هنا بالظبط
+    if (code == referralCode) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You cannot use your own code')),
+      );
+      return;
+    }
+
+    if (_usedReferral) {
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Referral already used')),
+      );
+
+      return;
+    }
+
+    final query = await FirebaseFirestore.instance
+        .collection('users')
+        .where('referralCode', isEqualTo: code)
+        .get();
+
+    if (query.docs.isEmpty) {
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Invalid referral code')),
+      );
+
+      return;
+    }
+// 🔥 حماية من التكرار (مهم لجوجل)
+    if (query.docs.length > 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error: duplicate referral codes')),
+      );
+      return;
+    }
+
+    final friendDoc = query.docs.first;
+
+    if (friendDoc.id == user.uid) {
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You cannot use your own code')),
+      );
+
+      return;
+    }
+
+    await FirebaseFirestore.instance.runTransaction((transaction) async {
+
+      final userRef =
+      FirebaseFirestore.instance.collection('users').doc(user.uid);
+
+      final friendRef = friendDoc.reference;
+
+      transaction.update(userRef, {
+        'totalCoins': FieldValue.increment(50),
+        'usedReferral': true,
+      });
+
+      transaction.update(friendRef, {
+        'totalCoins': FieldValue.increment(50),
+      });
+
+    });
+
+    await _loadCoins();
+
+    setState(() {
+      _usedReferral = true;
+    });
+
+    _friendCodeController.clear();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('🎉 50 reward coins added to your account')),
+    );
+  }
+
+
+  Future<void> _deleteAccount() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) return;
+
+    try {
+      // 🔥 إعادة تسجيل الدخول بـ Google
+      final googleProvider = GoogleAuthProvider();
+      await user.reauthenticateWithProvider(googleProvider);
+
+      // 🔥 حذف بيانات المستخدم
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .delete();
+
+      // 🔥 حذف الحساب نهائي
+      await user.delete();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Account deleted successfully')),
+      );
+
+      Navigator.of(context).popUntil((route) => route.isFirst);
+
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+
+  Future<void> shareReferral() async {
+    Share.share(
+      'Join the app and stay active. Use my code $referralCode to receive bonus rewards inside the app.',
+    );
+  }
+
+  void _showPrivacyPolicy() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Privacy Policy'),
+        content: SingleChildScrollView(
+          child: const Text(
+            """
+Effective date: Mar 16, 2026
+Welcome to GoEarn1 application. GoEarn1 respects and protects users’ privacy. This Privacy Policy explains how information is collected, used, and protected.
+
+
+1. البيانات التي نقوم بجمعها
+نقوم بجمع البيانات التالية عند استخدامك للتطبيق:
+
+- بيانات الخطوات اليومية (Pedometer) لتحسين تجربة المشي وتحقيق أهدافك اليومية.
+- بيانات الجهاز والتفاعل مع التطبيق، مثل استخدام التطبيق، الأخطاء، وإحصاءات الأداء (Firebase Analytics).
+- رموز الإشعارات (FCM Token) لإرسال الإشعارات اليومية وتنبيهات النشاط.
+- معلومات الاختيارات والإعدادات التي تحددها داخل التطبيق.
+
+---
+
+2. كيفية استخدام البيانات
+نستخدم البيانات التي نجمعها للأغراض التالية:
+
+- تحسين تجربة المستخدم داخل التطبيق.
+- عرض الإعلانات المناسبة من خلال Google AdMob.
+- إرسال إشعارات تنبيهية لتشجيع النشاط البدني وتحقيق الأهداف.
+- تحسين أداء التطبيق ومنع الأخطاء التقنية.
+"نقوم بجمع البريد الإلكتروني للمستخدم لأغراض التعرف على الحساب."
+---
+
+3. خدمات الطرف الثالث
+قد يتم مشاركة بعض البيانات مع خدمات طرف ثالث موثوقة لأغراض التحليل والإعلانات، مثل:
+
+- Google AdMob
+- Firebase Analytics و Firebase Crashlytics
+- Google Play Services
+
+نحن نضمن أن هذه الخدمات تتبع سياسات خصوصية صارمة وتستخدم البيانات فقط للأغراض المصرح بها.
+ا يُطلب من المستخدمين النقر على الإعلانات، كما لا يتم تقديم أي مكافآت أو حوافز مقابل مشاهدة أو التفاعل مع الإعلانات."
+---
+
+4. حقوق المستخدم
+لديك الحق في:
+
+- طلب حذف بياناتك الشخصية من تطبيقنا.
+- إيقاف أو تعطيل الإشعارات من داخل التطبيق.
+- تعديل إعدادات الخصوصية داخل التطبيق.
+
+---
+
+5. حفظ البيانات وأمانها
+نستخدم تقنيات وحماية حديثة لضمان عدم وصول أي طرف غير مخول إلى بياناتك.
+نحتفظ بالبيانات فقط طالما كانت مطلوبة لتحسين تجربة المستخدم وتشغيل التطبيق.
+
+لا يتم مكافأة المستخدم على التفاعل مع الإعلانات
+لا يحصل المستخدمون على أي أموال حقيقية مقابل دعوة الأصدقاء أو استخدام التطبيق. جميع المكافآت هي مكافآت ترويجية داخل التطبيق فقط، ولا يمكن ضمان تحويلها إلى أموال نقدية.
+---
+قوم بتخزين رموز الجهاز (Device Tokens) لاستخدامها في إرسال الإشعارات للمستخدمين وتحسين تجربة التواصل داخل التطبيق.
+6. التواصل معنا
+لأي استفسارات أو طلبات تتعلق بالخصوصية، يمكنك التواصل معنا عبر البريد الإلكتروني:
+sbhy6797@gmail.com
+
+---
+- العملات داخل التطبيق لا تمثل أموالًا حقيقية ولا يمكن تحويلها إلى نقد، وهي مخصصة للاستخدام الترفيهي فقط داخل التطبيق.
+- يتضمن التطبيق نظام إحالة (دعوة الأصدقاء) حيث يمكن للمستخدمين دعوة أصدقائهم والحصول على مكافآت داخل التطبيق.
+- جميع العملات (Coins) هي مكافآت افتراضية تُستخدم داخل التطبيق فقط ولا يمكن استخدامها خارجه.
+- التطبيق لا يضمن أي أرباح مالية أو دخل حقيقي للمستخدمين.
+
+7. التعديلات على سياسة الخصوصية
+يجوز لنا تحديث هذه السياسة من وقت لآخر لتعكس أي تغييرات في التطبيق أو متطلبات قانونية.
+ستتم إشعار المستخدمين بأي تغييرات كبيرة عبر التطبيق أو البريد الإلكتروني إذا توفر.
+
+---
+
+باستخدامك لتطبيق GoEarn1، فإنك توافق على جمع واستخدام بياناتك كما هو موضح في سياسة الخصوصية هذه.
+          """,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openPrivacyPolicyLink() async {
+    final url = Uri.parse('https://sites.google.com/view/goearn1-privacy-/home');
+
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  // ✅ Terms & Conditions Dialog
+  void _showTermsAndConditions() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Terms & Conditions'),
+        content: const SingleChildScrollView(
+          child: Text(
+            """
+Terms & Conditions
+
+Effective date: Mar 16, 2026
+
+By downloading or using this application, you agree to be bound by these Terms & Conditions. If you do not agree, please do not use the app.
+
+Important Notice:
+Coins are virtual rewards used داخل التطبيق فقط ولا يمكن تحويلها إلى أموال حقيقية.
+Reward requests may be reviewed to ensure fair usage and prevent abuse.
+
+1. Use of the App
+You agree to use the application in a lawful and appropriate manner. Any misuse, fraud, or abuse of the app may result in suspension or termination of your account.
+
+2. Accounts
+You are responsible for maintaining the security of your account and any activity performed under it. We are not responsible for unauthorized access.
+
+3. Virtual Currency (Coins)
+- Coins earned within the app are virtual and have no guaranteed real-world monetary value.
+- Coins may be modified, reset, or removed at any time at the discretion of the developer.
+- Coins cannot be transferred between accounts unless explicitly allowed by the system.
+
+4. Rewards & Referrals
+- Referral rewards are granted under specific conditions defined by the app.
+- Abuse of the referral system or attempts to manipulate the system may result in loss of rewards or account suspension.
+
+5. 5. Reward Requests
+- Reward requests may be reviewed to ensure fair usage and prevent abuse.
+- We reserve the right to approve, delay, or reject any withdrawal request.
+- 5. Reward Requests may be denied in cases including but not limited to:
+  - Suspicious or fraudulent activity
+  - Violation of app policies
+  - Invalid or incorrect payment information
+- Processing times for withdrawals may vary.
+- Rewards are virtual and may be redeemed for in-app benefits or limited promotional rewards at the developer’s discretion. No guaranteed monetary value is provided.
+- We do not guarantee that all withdrawal requests will be approved.
+
+6. Advertisements
+This application displays advertisements provided by third-party services such as Google AdMob. We are not responsible for the content or behavior of these ads.
+
+7. Third-Party Services
+The app may use third-party services including:
+- Firebase (Authentication, Analytics, Crashlytics, Cloud Firestore)
+- Google AdMob
+These services operate under their own privacy policies.
+
+8. Limitation of Liability
+We are not liable for any direct or indirect damages resulting from the use or inability to use the app.
+
+9. Changes to Terms
+We reserve the right to update or modify these Terms & Conditions at any time without prior notice. Continued use of the app means you accept the updated terms.
+
+10. Account Termination
+We reserve the right to suspend or terminate any account that violates these Terms & Conditions.
+
+11. Acceptance
+By using this application, you acknowledge that you have read, understood, and agreed to these Terms & Conditions.
+            """,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ✅ Terms Link
+  void _openTermsLink() async {
+    final url = Uri.parse('https://sites.google.com/view/goearn1-/home');
+
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  void dispose() {
+
+    _friendCodeController.dispose();
+
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    return Scaffold(
+
+      backgroundColor: const Color(0xFF37F4FA),
+
+      body: SafeArea(
+
+        child: Column(
+
+          children: [
+
+            Expanded(
+
+              child: SingleChildScrollView(
+
+                child: Column(
+
+                  children: [
+
+                    const SizedBox(height: 20),
+
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        children: [
+
+                          Image.asset('assets/images/image_9.png', width: 45),
+
+                          const SizedBox(width: 10),
+
+                          const Text(
+                            'Settings',
+                            style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 25),
+
+                    Image.asset('assets/images/image 12.png', width: 70),
+
+                    const SizedBox(height: 25),
+
+                    _infoBox(
+                      icon: 'assets/images/image 13.png',
+                      text: user?.email ?? 'No Email',
+                      isEmail: true,
+                    ),
+
+                    const SizedBox(height: 15),
+
+                    _infoBox(
+                      icon: 'assets/images/image_5.png',
+                      text: '$totalCoins Coins',
+                    ),
+
+                    const SizedBox(height: 15),
+
+                    const Text(
+                      'Stay active and earn reward coins ',
+                      style: TextStyle(fontSize: 12),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    _infoBox(
+                      icon: 'assets/images/image 14.png',
+                      text: referralCode,
+                    ),
+
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+
+                        TextButton(
+                          onPressed: () {
+                            Clipboard.setData(
+                                ClipboardData(text: referralCode));
+                          },
+                          child: const Text('copy',
+                              style: TextStyle(color: Colors.red)),
+                        ),
+
+                        const SizedBox(width: 20),
+
+                        TextButton(
+                          onPressed: shareReferral,
+                          child: const Text('share',
+                              style: TextStyle(color: Colors.blue)),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: TextField(
+
+                        controller: _friendCodeController,
+                        enabled: !_usedReferral,
+
+                        decoration: InputDecoration(
+
+                          hintText: _usedReferral
+                              ? 'Referral already used'
+                              : 'Enter friend code',
+
+                          suffixIcon: IconButton(
+                            icon: const Icon(Icons.card_giftcard,
+                                color: Colors.green),
+                            onPressed:
+                            _usedReferral ? null : _useFriendCode,
+                          ),
+
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+
+                          filled: true,
+                          fillColor: Colors.white,
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    ElevatedButton(
+                      onPressed: _showPrivacyPolicy,
+                      child: const Text('Privacy Policy'),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    ElevatedButton(
+                      onPressed: _openPrivacyPolicyLink,
+                      child: const Text('Full Privacy Policy'),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    // ✅ Terms Buttons
+                    ElevatedButton(
+                      onPressed: _showTermsAndConditions,
+                      child: const Text('Terms & Conditions'),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    ElevatedButton(
+                      onPressed: _openTermsLink,
+                      child: const Text('Full Terms & Conditions'),
+                    ),
+
+                    const SizedBox(height: 40),
+
+                    // 🔴🔥 هنا بالظبط زر حذف الحساب (المكان الصح)
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red, // لون أحمر للتحذير
+                      ),
+                      onPressed: () {
+                        showDialog(
+                          context: context,
+                          builder: (_) => AlertDialog(
+                            title: const Text('Delete Account'),
+                            content: const Text(
+                              'Are you sure you want to delete your account? This action cannot be undone.',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  _deleteAccount(); // استدعاء حذف الحساب
+                                },
+                                child: const Text('Delete'),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      child: const Text('Delete Account'),
+                    ),
+
+                    const SizedBox(height: 40),
+                  ],
+                ),
+              ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.only(bottom: 15),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+
+                  GestureDetector(
+                    onTap: () {
+
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => DashboardScreen(
+                            totalCoins: totalCoins,
+                          ),
+                        ),
+                      );
+
+                    },
+                    child: Image.asset(
+                        'assets/images/image_7.png',
+                        width: 40),
+                  ),
+
+                  GestureDetector(
+                    onTap: () {
+
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const PaymentScreen(),
+                        ),
+                      );
+
+                    },
+                    child: Image.asset(
+                        'assets/images/image_8.png',
+                        width: 40),
+                  ),
+
+                  Image.asset(
+                      'assets/images/image_9.png',
+                      width: 40),
+
+                ],
+              ),
+            ),
+
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _infoBox({
+    required String icon,
+    required String text,
+    bool isEmail = false,
+  }) {
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 15),
+      height: 50,
+
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(30),
+      ),
+
+      child: Row(
+        children: [
+
+          Image.asset(icon, width: 24),
+
+          const SizedBox(width: 10),
+
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow:
+              isEmail ? TextOverflow.ellipsis : TextOverflow.visible,
+              style: const TextStyle(fontSize: 14),
+            ),
+          ),
+
+        ],
+      ),
+    );
+  }
+}

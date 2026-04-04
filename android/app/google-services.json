@@ -1,0 +1,62 @@
+{
+  "project_info": {
+    "project_number": "1004885776986",
+    "project_id": "goearn1",
+    "storage_bucket": "goearn1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1004885776986:android:94b23c352298bb96e2d663",
+        "android_client_info": {
+          "package_name": "com.goearn.goearn1"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1004885776986-9nco9b4ilp662oplo5fbihco5ef14a7g.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.goearn.goearn1",
+            "certificate_hash": "a1daa1b69c6760255769e4d26dbe3e898f9c850d"
+          }
+        },
+        {
+          "client_id": "1004885776986-u41rkdqqfqoi9uhqe8tuqrkp27q5avpo.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.goearn.goearn1",
+            "certificate_hash": "dee039c67ca72373cc1f04e9589c302edda289f0"
+          }
+        },
+        {
+          "client_id": "1004885776986-6qshe1alk012eok0jpsmf5114ae560s8.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBowXj-L5mhiA6ohbG6NUXHvh1B01LDJL8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1004885776986-6qshe1alk012eok0jpsmf5114ae560s8.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1004885776986-33lcfahoq6b9325ua4tkqcfgpj3tbfh5.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.goearn1"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
