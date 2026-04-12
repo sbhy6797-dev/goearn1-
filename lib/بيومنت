@@ -17,9 +17,8 @@ class PaymentScreen extends StatefulWidget {
 class _PaymentScreenState extends State<PaymentScreen> {
   int totalCoins = 0;
 
-  final String uid = FirebaseAuth.instance.currentUser!.uid;
-  late final DocumentReference userDoc =
-  FirebaseFirestore.instance.collection('users').doc(uid);
+  late final String uid;
+  late final DocumentReference userDoc;
 
   BannerAd? _bannerAd;
   bool _isBannerLoaded = false;
@@ -39,32 +38,51 @@ class _PaymentScreenState extends State<PaymentScreen> {
   @override
   void initState() {
     super.initState();
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    uid = user.uid;
+    userDoc = FirebaseFirestore.instance.collection('users').doc(uid);
+
     _loadUserCoins();
     _loadBannerAd();
   }
 
   Future<void> _loadUserCoins() async {
-    final snapshot = await userDoc.get();
-    if (snapshot.exists) {
-      setState(() {
-        totalCoins = snapshot['totalCoins'] ?? 0;
-      });
+    try {
+      final snapshot = await userDoc.get();
+
+      if (snapshot.exists && mounted) {
+        setState(() {
+          totalCoins = (snapshot.data() as Map<String, dynamic>)['totalCoins'] ?? 0;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error loading coins: $e");
     }
   }
 
   void _loadBannerAd() {
     _bannerAd = BannerAd(
-      adUnitId: 'ca-app-pub-5925712456846655/5268830390',
+      adUnitId: 'ca-app-pub-3940256099942544/6300978111',
       size: AdSize.banner,
       request: const AdRequest(),
       listener: BannerAdListener(
-        onAdLoaded: (_) => setState(() => _isBannerLoaded = true),
-        onAdFailedToLoad: (ad, error) => ad.dispose(),
+        onAdLoaded: (_) {
+          if (mounted) {
+            setState(() => _isBannerLoaded = true);
+          }
+        },
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+          debugPrint("Banner error: $error");
+        },
       ),
     )..load();
   }
 
-  void handleWithdraw(Map<String, dynamic> item) async {
+  Future<void> handleWithdraw(Map<String, dynamic> item) async {
     if (totalCoins < item["coins"]) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -88,7 +106,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
 
     if (result != null) {
-      await _loadUserCoins(); // تحديث الرصيد من Firebase
+      await _loadUserCoins();
     }
   }
 
@@ -105,6 +123,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       body: Column(
         children: [
           const SizedBox(height: 40),
+
           Expanded(
             child: GridView.builder(
               padding: const EdgeInsets.all(16),
@@ -117,6 +136,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               ),
               itemBuilder: (context, index) {
                 final item = payments[index];
+
                 return GestureDetector(
                   onTap: () => handleWithdraw(item),
                   child: Container(
@@ -129,11 +149,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       children: [
                         Image.asset(item["image"], width: 45),
                         const SizedBox(height: 8),
-                        Text("${item["amount"]} ${item["currency"]}",
-                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                        Text(
+                          "${item["amount"]} ${item["currency"]}",
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
                         const SizedBox(height: 4),
-                        Text("${item["coins"]} عملة",
-                            style: const TextStyle(color: Colors.orange)),
+                        Text(
+                          "${item["coins"]} عملة",
+                          style: const TextStyle(color: Colors.orange),
+                        ),
                       ],
                     ),
                   ),
@@ -141,9 +165,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
               },
             ),
           ),
-          if (_isBannerLoaded)
+
+          if (_isBannerLoaded && _bannerAd != null)
             Padding(
-              padding: const EdgeInsets.only(bottom: 40), // الرقم ده هو المسافة من أسفل الشاشة
+              padding: const EdgeInsets.only(bottom: 20),
               child: SizedBox(
                 height: _bannerAd!.size.height.toDouble(),
                 width: _bannerAd!.size.width.toDouble(),
@@ -152,6 +177,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
             ),
         ],
       ),
+
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.only(bottom: 15),
         child: Row(
@@ -160,11 +186,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
             GestureDetector(
               onTap: () => Navigator.pushReplacement(
                 context,
-                MaterialPageRoute(builder: (_) =>  DashboardScreen(totalCoins: totalCoins)),
+                MaterialPageRoute(
+                  builder: (_) => DashboardScreen(totalCoins: totalCoins),
+                ),
               ),
               child: Image.asset('assets/images/image_7.png', width: 40),
             ),
+
             Image.asset('assets/images/image_8.png', width: 40),
+
             GestureDetector(
               onTap: () => Navigator.pushReplacement(
                 context,

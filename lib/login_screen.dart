@@ -1,7 +1,8 @@
-  import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'home_screen.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -11,58 +12,106 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
+
   final FirebaseAnalytics analytics = FirebaseAnalytics.instance;
   bool _loading = false;
 
   @override
   void initState() {
     super.initState();
-    // تسجيل عرض الشاشة
-    analytics.logScreenView(screenName: 'LoginPage');
+
+
+    analytics.logEvent(
+      name: 'screen_view',
+      parameters: {
+        'screen_name': 'login_page',
+      },
+    );
   }
 
-  /// 🔐 تسجيل دخول Anonymous مؤقت
   Future<void> _signInAnonymously() async {
     if (_loading) return;
 
     setState(() => _loading = true);
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
 
-      if (user == null) {
-        await FirebaseAuth.instance.signInAnonymously();
+      final userCredential =
+      await FirebaseAuth.instance.signInAnonymously();
+
+      final user = userCredential.user;
+
+
+      await analytics.logEvent(
+        name: 'login_success',
+        parameters: {
+          'method': 'anonymous',
+        },
+      );
+
+
+      if (user != null) {
+        await FirebaseCrashlytics.instance
+            .setUserIdentifier(user.uid);
       }
 
       if (!mounted) return;
 
-      // الانتقال للـ HomeScreen
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      // عرض رسالة خطأ للمستخدم
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Login failed, try again"),
+        MaterialPageRoute(
+          builder: (_) => const HomeScreen(),
         ),
       );
-    } finally {
-      if (mounted) setState(() => _loading = false);
+
+    } on FirebaseAuthException catch (e, stack) {
+
+
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        reason: 'Anonymous Login Failed',
+        fatal: false,
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.message ?? "Login failed"),
+          backgroundColor: Colors.red,
+        ),
+      );
+
+    } catch (e, stack) {
+
+
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        reason: 'Unexpected Login Error',
+        fatal: false,
+      );
+    }
+
+    finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+
     final width = MediaQuery.of(context).size.width;
     final height = MediaQuery.of(context).size.height;
 
     return Scaffold(
       body: Stack(
         children: [
-          // الخلفية المتدرجة
+
+
           Positioned.fill(
             child: Container(
               decoration: const BoxDecoration(
@@ -78,7 +127,7 @@ class _LoginPageState extends State<LoginPage> {
             ),
           ),
 
-          // الصورة السفلية
+
           Positioned(
             bottom: 0,
             left: 0,
@@ -91,44 +140,47 @@ class _LoginPageState extends State<LoginPage> {
             ),
           ),
 
-          // المحتوى
+
           Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+
                 Image.asset(
                   "assets/images/image_1.png",
                   width: width * 0.6,
                   height: height * 0.35,
                   fit: BoxFit.contain,
                 ),
+
                 SizedBox(height: height * 0.03),
 
                 SizedBox(
                   width: width * 0.6,
                   height: 55,
                   child: ElevatedButton(
+
                     onPressed: _loading
                         ? null
                         : () async {
-                      // تسجيل Event في Firebase Analytics
-                      analytics.logEvent(
-                        name: 'app_started',
+
+                      await analytics.logEvent(
+                        name: 'login_attempt',
                         parameters: {
-                          'screen': 'login',
-                          'method': 'start_button',
+                          'method': 'anonymous',
                         },
                       );
 
-                      // تسجيل دخول Anonymous
                       await _signInAnonymously();
                     },
+
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(30),
                       ),
                     ),
+
                     child: _loading
                         ? const CircularProgressIndicator(
                       color: Colors.white,

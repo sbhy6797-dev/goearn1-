@@ -35,7 +35,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   int totalCoins = 0;
   int lastSensorSteps = 0;
 
-  // 👇 حطه هنا بالظبط
+
   List<int> speedLevels = [3, 5, 7];
 
   int initialSteps = 0;
@@ -64,7 +64,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   // ===== Ad Tracking =====
   int adsWatchedCount = 0;
 
-  // ✅ ضيفه هنا
+
   DateTime? lastAdTime;
 
 
@@ -76,7 +76,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   void initState() {
     super.initState();
     _loadLocalData();
-    // 👇 هنا بالظبط
+
     _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -93,10 +93,10 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       _restoreTimerFromFirebase();
     });
 
-    // ✅ تحميل الإعلان أول ما الشاشة تفتح
+
     _loadInterstitial();
   }
-  // ===== RouteAware: اشترك في RouteObserver =====
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -109,13 +109,13 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
   @override
   void didPopNext() {
-    _restoreTimerFromFirebase(); // 👈 ده الحل السحري
+    _restoreTimerFromFirebase();
     setState(() {});
   }
   @override
   void didPushNext() {
-    // المستخدم فتح شاشة جديدة
-    // نترك التايمر يعمل بالخلفية
+
+
   }
   @override
   void didPop() {
@@ -140,7 +140,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     });
   }
 
-  // ✅👇 حط الدالة هنا بالظبط
   void _loadInterstitial() {
     InterstitialAd.load(
       adUnitId: 'ca-app-pub-3940256099942544/1033173712',
@@ -161,7 +160,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       ),
     );
   }
-// ✅ عرض الإعلان بعد الضغط على Convert
+
   void _showInterstitial() async {
     if (_isInterstitialReady && _interstitialAd != null) {
       _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
@@ -182,7 +181,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
           }
 
           adsToday++;
-          adsWatchedCount++; // ✅ مهم جدًا
+          adsWatchedCount++;
 
           await userDoc.set({
             'adsWatchedToday': adsToday,
@@ -216,7 +215,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
           isFirstUpdate = data['isFirstUpdate'] ?? true;
           adsWatchedCount = data['adsWatchedToday'] ?? 0;
         });
-        // ✅ استرجاع التايمر
+
         Timestamp? boostTime = data['boostEndTime'];
 
         if (boostTime != null) {
@@ -228,7 +227,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
           if (remaining > 0) {
 
             setState(() {
-              boostEndTime = endTime;        // ✅ مرة واحدة بس
+              boostEndTime = endTime;
               remainingSeconds = remaining;
             });
 
@@ -276,7 +275,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
           isRestore: true,
         );
 
-        // ✅ أهم سطر
+
         setState(() {
           remainingSeconds = remaining;
         });
@@ -362,7 +361,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
           lastAdDate.toDate().day == today.day) {
         adsToday = data['adsWatchedToday'] ?? 0;
       } else {
-        adsToday = 0; // 🔥 reset اليوم الجديد
+        adsToday = 0;
       }
     }
 
@@ -391,7 +390,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
         'isFirstUpdate': isFirstUpdate,
         'adsWatchedToday': adsWatchedCount,
 
-        // ✅ أهم سطرين (الحل)
+
         'boostEndTime': boostEndTime != null
             ? Timestamp.fromDate(boostEndTime!)
             : null,
@@ -496,7 +495,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
           reward: 0,
 
-          speed: 3, // ✅ ثابت
+          speed: 3,
 
           duration: const Duration(minutes: 2),
 
@@ -526,7 +525,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
           reward: 0,
 
-          speed: 3, // ✅ سرعة ثابتة
+          speed: 3,
 
           duration: const Duration(minutes: 2),
 
@@ -537,7 +536,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             adsWatchedCount++;
             _updateFirebase();
 
-            activateSpeed(3, duration.inSeconds); // ✅ دائما x3
+            activateSpeed(3, duration.inSeconds);
 
           },
 

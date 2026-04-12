@@ -1,4 +1,4 @@
-package com.example.goearn1
+package com.goearn.goearn1
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -3,7 +3,6 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-
 class WithdrawScreen extends StatefulWidget {
   final String type;
   final int amount;
@@ -110,6 +109,14 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       }
     }
 
+    // 🔥 جلب التوكن (إضافة فقط بدون لمس باقي الكود)
+    final userSnap = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .get();
+
+    final fcmToken = userSnap.data()?['fcmToken'];
+
     setState(() => isProcessing = true);
 
     try {
@@ -125,7 +132,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           throw Exception('رصيدك غير كافي');
         }
 
-        // ✅ خصم الرصيد (client-side لكن داخل transaction)
+        // ✅ خصم الرصيد
         transaction.set(
           userDoc,
           {
@@ -136,7 +143,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           SetOptions(merge: true),
         );
 
-        // ✅ إنشاء طلب سحب بحالة pending (مهم جداً)
+        // ✅ إنشاء طلب سحب
         final withdrawRef = FirebaseFirestore.instance
             .collection('withdraw_requests')
             .doc();
@@ -148,8 +155,9 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           'amount': widget.amount,
           'coins': widget.coins,
           'account': input,
-          'status': 'pending', // ✅ تعديل مهم
+          'status': 'pending',
           'createdAt': FieldValue.serverTimestamp(),
+          'fcmToken': fcmToken, // 🔥 إضافة بدون حذف أي شيء
         });
       });
 
@@ -161,10 +169,25 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('تم إرسال طلب السحب Processing may take 3–7 business days.⏳'),
+          content: Text(
+              'تم إرسال طلب السحب Processing may take 3–7 business days.⏳'),
           backgroundColor: Colors.green,
         ),
       );
+
+      // 🔥 إضافة إشعار داخل المستخدم بدون حذف أي شيء
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('notifications')
+          .add({
+        'title': 'Withdrawal Request Sent',
+        'body': 'Your request is under review',
+        'createdAt': FieldValue.serverTimestamp(),
+        'read': false,
+        'type': 'withdraw',
+        'status': 'pending',
+      });
 
       Navigator.pop(context, widget.coins);
     } catch (e) {
@@ -197,7 +220,8 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
             const SizedBox(height: 10),
             Text(
               '${widget.amount} ${widget.type == 'paypal' ? '\$' : 'ج'}',
-              style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
+              style:
+              const TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 25),
             TextField(

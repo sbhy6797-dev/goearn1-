@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
@@ -6,10 +7,13 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'dashboard_screen.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 
 final GoogleSignIn _googleSignIn = GoogleSignIn(
   scopes: ['email'],
 );
+
+final FirebaseAnalytics analytics = FirebaseAnalytics.instance;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +24,16 @@ void main() async {
 
   FlutterError.onError =
       FirebaseCrashlytics.instance.recordFlutterFatalError;
+
+  PlatformDispatcher.instance.onError = (error, stack) {
+    FirebaseCrashlytics.instance.recordError(
+      error,
+      stack,
+      reason: 'Unhandled async error',
+      fatal: false,
+    );
+    return true;
+  };
 
   runApp(const MyApp());
 }
@@ -51,13 +65,27 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // 🚨 مهم جدًا: منع الدخول التلقائي
+
+      await analytics.logEvent(
+        name: 'login_attempt',
+        parameters: {'method': 'google'},
+      );
+
       await _googleSignIn.signOut();
       await FirebaseAuth.instance.signOut();
 
-      // 👇 فتح اختيار الحسابات
       final googleUser = await _googleSignIn.signIn();
-      if (googleUser == null) return;
+
+      if (googleUser == null) {
+
+        await analytics.logEvent(
+          name: 'login_cancelled',
+          parameters: {'method': 'google'},
+        );
+
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
 
       final googleAuth = await googleUser.authentication;
 
@@ -72,19 +100,37 @@ class _HomeScreenState extends State<HomeScreen> {
       final user = userCredential.user;
       if (user == null) return;
 
+
+      await analytics.logEvent(
+        name: 'login_success',
+        parameters: {
+          'method': 'google',
+        },
+      );
+
+
+      await FirebaseCrashlytics.instance
+          .setUserIdentifier(user.uid);
+
       final userRef =
       FirebaseFirestore.instance.collection('users').doc(user.uid);
 
-      // إنشاء مستخدم جديد لو مش موجود
       await FirebaseFirestore.instance.runTransaction((transaction) async {
         final snapshot = await transaction.get(userRef);
 
         if (!snapshot.exists) {
           transaction.set(userRef, {
-            'email': user.email,
+            'email': user.email ?? '',
             'displayName': user.displayName ?? '',
+            'photoURL': user.photoURL ?? '',
             'totalCoins': 0,
             'createdAt': FieldValue.serverTimestamp(),
+            'lastLogin': FieldValue.serverTimestamp(),
+          });
+        } else {
+          transaction.update(userRef, {
+            'lastLogin': FieldValue.serverTimestamp(),
+            'loginCount': FieldValue.increment(1),
           });
         }
       });
@@ -100,20 +146,38 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (_) => DashboardScreen(totalCoins: totalCoins),
         ),
       );
-    } catch (e) {
-      print("🔥 ERROR: $e");
+
+    } catch (e, stack) {
+
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        reason: 'Google Sign-In failed',
+        fatal: false,
+      );
+
+      await analytics.logEvent(
+        name: 'login_failed',
+        parameters: {'method': 'google'},
+      );
+
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
+        const SnackBar(
+          content: Text("Login failed. Please try again later"),
+          backgroundColor: Colors.red,
+        ),
       );
+
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _signOut() async {
-    await _googleSignIn.signOut();
     await FirebaseAuth.instance.signOut();
+    await _googleSignIn.signOut();
 
     if (!mounted) return;
 
@@ -149,13 +213,12 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-
-
           SafeArea(
             child: Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+
                   const SizedBox(height: 40),
 
                   Image.asset("assets/images/image_1.png", height: 180),
@@ -173,8 +236,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         : Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Image.asset("assets/images/image_3.png",
-                            height: 24),
+                        Image.asset("assets/images/image_3.png", height: 24),
                         const SizedBox(width: 10),
                         const Text(
                           "Continue with Google",

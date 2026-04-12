@@ -27,13 +27,13 @@ class _PaymentScreenState extends State<PaymentScreen> {
   final List<Map<String, dynamic>> payments = [
     {"type": "paypal", "amount": 6, "coins": 90000, "image": "assets/images/paypal.png", "currency": "\$"},
     {"type": "paypal", "amount": 4, "coins": 70000, "image": "assets/images/paypal.png", "currency": "\$"},
-    {"type": "paypal", "amount": 2, "coins": 50000, "image": "assets/images/paypal.png", "currency": "\$"},
+    {"type": "paypal", "amount": 2, "coins": 50, "image": "assets/images/paypal.png", "currency": "\$"},
     {"type": "fawry", "amount": 200, "coins": 90000, "image": "assets/images/fawry.png", "currency": "ج"},
     {"type": "fawry", "amount": 150, "coins": 70000, "image": "assets/images/fawry.png", "currency": "ج"},
     {"type": "fawry", "amount": 100, "coins": 50000, "image": "assets/images/fawry.png", "currency": "ج"},
     {"type": "vodafone", "amount": 200, "coins": 90000, "image": "assets/images/vodafone.png", "currency": "ج"},
     {"type": "vodafone", "amount": 150, "coins": 70000, "image": "assets/images/vodafone.png", "currency": "ج"},
-    {"type": "vodafone", "amount": 100, "coins": 50000, "image": "assets/images/vodafone.png", "currency": "ج"},
+    {"type": "vodafone", "amount": 100, "coins": 50, "image": "assets/images/vodafone.png", "currency": "ج"},
   ];
 
   @override
@@ -88,7 +88,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
 
     if (result != null) {
-      await _loadUserCoins(); // تحديث الرصيد من Firebase
+      await _loadUserCoins();
     }
   }
 
@@ -132,7 +132,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         Text("${item["amount"]} ${item["currency"]}",
                             style: const TextStyle(fontWeight: FontWeight.bold)),
                         const SizedBox(height: 4),
-                        Text("${item["coins"]} عملة",
+                        Text("${item["coins"]}",
                             style: const TextStyle(color: Colors.orange)),
                       ],
                     ),
@@ -143,7 +143,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
           ),
           if (_isBannerLoaded)
             Padding(
-              padding: const EdgeInsets.only(bottom: 40), // الرقم ده هو المسافة من أسفل الشاشة
+              padding: const EdgeInsets.only(bottom: 40),
               child: SizedBox(
                 height: _bannerAd!.size.height.toDouble(),
                 width: _bannerAd!.size.width.toDouble(),

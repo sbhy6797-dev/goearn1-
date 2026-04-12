@@ -7,7 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'dashboard_screen.dart';
 import 'payment_screen.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-
+import 'notifications_screen.dart';
 
 
 class SettingsScreen extends StatefulWidget {
@@ -190,7 +190,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _friendCodeController.clear();
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('🎉 50 reward coins added to your account')),
+      const SnackBar(content: Text('🎉 You received 50 bonus coins (in-app rewards only)')),
     );
   }
 
@@ -724,21 +724,84 @@ Agree to these Terms
 
                     const SizedBox(height: 20),
 
+
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
 
-                          Image.asset('assets/images/image_9.png', width: 45),
-
-                          const SizedBox(width: 10),
-
-                          const Text(
-                            'Settings',
-                            style: TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold),
+                          Row(
+                            children: [
+                              Image.asset('assets/images/image_9.png', width: 45),
+                              const SizedBox(width: 10),
+                              const Text(
+                                'Settings',
+                                style: TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
                           ),
+                          Stack(
+                            children: [
+
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.notifications,
+                                  color: Colors.amber, // 🔥 لون ذهبي
+                                  size: 45, // تكبير الجرس
+                                ),
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => const NotificationsScreen(),
+                                    ),
+                                  );
+                                },
+                              ),
+
+                              // 🔴 Badge
+                              Positioned(
+                                right: 6,
+                                top: 6,
+                                child: StreamBuilder(
+                                  stream: FirebaseFirestore.instance
+                                      .collection('users')
+                                      .doc(FirebaseAuth.instance.currentUser!.uid)
+                                      .collection('notifications')
+                                      .where('read', isEqualTo: false)
+                                      .snapshots(),
+                                  builder: (context, snapshot) {
+                                    if (!snapshot.hasData) return const SizedBox();
+
+                                    int count = snapshot.data!.docs.length;
+
+                                    if (count == 0) return const SizedBox();
+
+                                    return Container(
+                                      padding: const EdgeInsets.all(5),
+                                      decoration: const BoxDecoration(
+                                        color: Colors.red,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Text(
+                                        count > 9 ? "9+" : "$count",
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          )
+
                         ],
                       ),
                     ),
