@@ -21,6 +21,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
+
   int getRemainingSeconds() {
     if (boostEndTime == null) return 0;
 
@@ -35,6 +36,10 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   int totalCoins = 0;
   int lastSensorSteps = 0;
 
+  String getTodayKey() {
+    final now = DateTime.now();
+    return "${now.year}-${now.month.toString().padLeft(2,'0')}-${now.day.toString().padLeft(2,'0')}";
+  }
 
   List<int> speedLevels = [3, 5, 7];
 
@@ -64,35 +69,62 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   // ===== Ad Tracking =====
   int adsWatchedCount = 0;
 
-
   DateTime? lastAdTime;
 
+  bool canShowAd() {
+    if (!_isInterstitialReady) return false;
+    if (adsWatchedCount >= 20) return false;
+
+    if (lastAdTime == null) return true;
+
+    return DateTime.now().difference(lastAdTime!).inSeconds > 60;
+  }
+
+  void tryShowAd() {
+    if (!canShowAd()) return;
+
+    lastAdTime = DateTime.now();
+    _showInterstitial();
+  }
 
 // ===== Interstitial Ad =====
   InterstitialAd? _interstitialAd;
   bool _isInterstitialReady = false;
 
+  Future<void> registerAdWatch() async {
+    adsWatchedCount++;
+
+    await userDoc.set({
+      'adsWatchedToday': adsWatchedCount,
+      'adsDate': getTodayKey(),
+    }, SetOptions(merge: true));
+  }
+
   @override
   void initState() {
     super.initState();
+
     _loadLocalData();
 
     _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+
+      setState(() {
+        remainingSeconds = getRemainingSeconds();
+      });
     });
 
     totalCoins = widget.totalCoins;
+
     final user = FirebaseAuth.instance.currentUser!;
     uid = user.uid;
     userDoc = FirebaseFirestore.instance.collection('users').doc(uid);
 
     initApp();
 
-
-    Future.delayed(Duration(milliseconds: 800), () {
+    Future.delayed(const Duration(milliseconds: 800), () {
       _restoreTimerFromFirebase();
     });
-
 
     _loadInterstitial();
   }
@@ -162,96 +194,94 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   }
 
   void _showInterstitial() async {
-    if (_isInterstitialReady && _interstitialAd != null) {
-      _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
+    if (!_isInterstitialReady || _interstitialAd == null) return;
 
-        onAdDismissedFullScreenContent: (ad) async {
-          ad.dispose();
-          _loadInterstitial();
+    _interstitialAd!.fullScreenContentCallback =
+        FullScreenContentCallback(
+          onAdDismissedFullScreenContent: (ad) async {
+            ad.dispose();
+            _loadInterstitial();
 
-          final now = DateTime.now();
-          final today = DateTime(now.year, now.month, now.day);
+            if (mounted) {
+              await registerAdWatch();
+            }
 
-          DocumentSnapshot snapshot = await userDoc.get();
-          int adsToday = 0;
+          },
 
-          if (snapshot.exists) {
-            final data = snapshot.data() as Map<String, dynamic>;
-            adsToday = data['adsWatchedToday'] ?? 0;
-          }
+          onAdFailedToShowFullScreenContent: (ad, error) {
+            ad.dispose();
+            _loadInterstitial();
+          },
+        );
 
-          adsToday++;
-          adsWatchedCount++;
+    lastAdTime = DateTime.now();
 
-          await userDoc.set({
-            'adsWatchedToday': adsToday,
-            'lastAdDate': Timestamp.fromDate(today),
-          }, SetOptions(merge: true));
-        },
-
-        onAdFailedToShowFullScreenContent: (ad, error) {
-          ad.dispose();
-          _loadInterstitial();
-        },
-      );
-
-      _interstitialAd!.show();
-      _interstitialAd = null;
-      _isInterstitialReady = false;
-    }
+    _interstitialAd!.show();
+    _interstitialAd = null;
+    _isInterstitialReady = false;
   }
-
 
   Future<void> loadData() async {
     try {
       final snapshot = await userDoc.get();
       if (snapshot.exists) {
         final data = snapshot.data() as Map<String, dynamic>;
+
+        // ================= ADS LOGIC  =================
+        final todayKey = getTodayKey();
+        final savedDate = data['adsDate'];
+
+        int adsCount = data['adsWatchedToday'] ?? 0;
+
+        if (savedDate != todayKey) {
+          adsCount = 0;
+
+          await userDoc.set({
+            'adsWatchedToday': 0,
+            'adsDate': todayKey,
+          }, SetOptions(merge: true));
+        }
+
+        // ================= STATE UPDATE =================
         setState(() {
           steps = data['steps'] ?? 0;
           coins = data['coins'] ?? 0;
-          totalCoins = data['totalCoins'] ?? 0;
+          totalCoins = data['totalCoins'] ?? widget.totalCoins;
           initialSteps = data['initialSteps'] ?? 0;
           isFirstUpdate = data['isFirstUpdate'] ?? true;
-          adsWatchedCount = data['adsWatchedToday'] ?? 0;
+
+          adsWatchedCount = adsCount;
         });
 
-        Timestamp? boostTime = data['boostEndTime'];
+        // ================= BOOST LOGIC =================
+        final boostTime = data['boostEndTime'];
 
         if (boostTime != null) {
-
-          DateTime endTime = boostTime.toDate();
-
-          final remaining = endTime.difference(DateTime.now()).inSeconds;
+          final DateTime endTime = boostTime.toDate();
+          final int remaining =
+              endTime.difference(DateTime.now()).inSeconds;
 
           if (remaining > 0) {
-
             setState(() {
               boostEndTime = endTime;
               remainingSeconds = remaining;
+              boostMultiplier =
+                  (data['boostMultiplier'] ?? 3).toDouble();
             });
-
-            activateSpeed(
-              data['boostMultiplier'] ?? 3,
-              remaining,
-              isRestore: true,
-            );
-
           } else {
-
-            if (remaining <= 0) {
+            setState(() {
               boostEndTime = null;
               remainingSeconds = 0;
               boostMultiplier = 1.0;
-            }
-
+            });
           }
         }
       }
     } catch (e) {
-      print('Error loading Firebase data: $e');
+      debugPrint('Error loading Firebase data: $e');
     }
   }
+
 
   Future<void> _restoreTimerFromFirebase() async {
     try {
@@ -288,7 +318,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
         });
       }
     } catch (e) {
-      print("Timer restore error: $e");
+      debugPrint("Timer restore error: $e");
     }
   }
 
@@ -329,7 +359,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
 
   void onStepError(Object error) {
-    print("Step Error: $error");
+    debugPrint("Step Error: $error");
   }
 
   Future<void> convertCoins() async {
@@ -342,30 +372,15 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       initialSteps = 0;
       isFirstUpdate = true;
     });
+
     await _saveLocalData();
     await _updateFirebase();
 
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    tryShowAd();
 
-    DocumentSnapshot snapshot = await userDoc.get();
-    int adsToday = 0;
+    final adsToday = adsWatchedCount;
 
-    if (snapshot.exists) {
-      final data = snapshot.data() as Map<String, dynamic>;
-      Timestamp? lastAdDate = data['lastAdDate'];
-
-      if (lastAdDate != null &&
-          lastAdDate.toDate().year == today.year &&
-          lastAdDate.toDate().month == today.month &&
-          lastAdDate.toDate().day == today.day) {
-        adsToday = data['adsWatchedToday'] ?? 0;
-      } else {
-        adsToday = 0;
-      }
-    }
-
-    if (adsToday < 20 &&
+    if (adsToday < 10 &&
         _isInterstitialReady &&
         (lastAdTime == null ||
             DateTime.now().difference(lastAdTime!).inSeconds > 20)) {
@@ -380,25 +395,21 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
   Future<void> _updateFirebase() async {
     try {
+      final snapshot = await userDoc.get();
+      final data = snapshot.data() as Map<String, dynamic>?;
 
-      await _saveLocalData(); // ✔
+      final oldTotal = data?['totalCoins'] ?? 0;
+
+      final safeTotal = totalCoins < oldTotal ? oldTotal : totalCoins;
+
       await userDoc.set({
+        'totalCoins': safeTotal,
         'steps': steps,
         'coins': coins,
-        'totalCoins': totalCoins,
-        'initialSteps': initialSteps,
-        'isFirstUpdate': isFirstUpdate,
-        'adsWatchedToday': adsWatchedCount,
-
-
-        'boostEndTime': boostEndTime != null
-            ? Timestamp.fromDate(boostEndTime!)
-            : null,
-        'boostMultiplier': boostMultiplier,
-
       }, SetOptions(merge: true));
+
     } catch (e) {
-      print('Error updating Firebase: $e');
+      debugPrint('Error updating Firebase: $e');
     }
   }
 
@@ -558,7 +569,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             const SizedBox(height: 20),
             _circleSteps(),
             const SizedBox(height: 10),
-            if (boostEndTime != null && remainingSeconds > 1)
+            if (getRemainingSeconds() > 0)
               Column(
                 children: [
                   Text(
@@ -889,19 +900,34 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
   }
 
   void _loadBannerAd() {
+
+    _bannerAd?.dispose();
+
     _bannerAd = BannerAd(
       size: AdSize.banner,
+
+
       adUnitId: 'ca-app-pub-3940256099942544/6300978111',
+
       request: const AdRequest(),
+
       listener: BannerAdListener(
-        onAdLoaded: (_) {
+        onAdLoaded: (ad) {
+          if (!mounted) return;
+
           setState(() {
             _isBannerReady = true;
           });
         },
+
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
-          print(error);
+          _isBannerReady = false;
+
+          debugPrint("Banner failed: ${error.message}");
+          Future.delayed(const Duration(seconds: 10), () {
+            _loadBannerAd();
+          });
         },
       ),
     );
@@ -913,7 +939,7 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
     if (_rewardedAd == null) return;
 
     _rewardedAd!.show(
-      onUserEarnedReward: (_, __) {
+      onUserEarnedReward: (ad, reward) {
         setState(() {
           _adWatched = true;
         });
@@ -961,7 +987,7 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
               ),
             const SizedBox(height: 150),
             if (_isBannerReady)
-              Container(
+              SizedBox(
                 width: _bannerAd!.size.width.toDouble(),
                 height: _bannerAd!.size.height.toDouble(),
                 child: AdWidget(ad: _bannerAd!),

@@ -101,8 +101,12 @@ class _CongratulationScreenState extends State<CongratulationScreen>
             _loadRewardedAd();
           },
         );
+    _rewardedAd!.show(
+      onUserEarnedReward: (ad, reward) {
+        _onAdCompleted();
+      },
+    );
 
-    _rewardedAd!.show(onUserEarnedReward: (_, __) {});
   }
 
   // ================= AD COMPLETED =================

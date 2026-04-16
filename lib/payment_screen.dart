@@ -18,8 +18,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
   int totalCoins = 0;
 
   final String uid = FirebaseAuth.instance.currentUser!.uid;
-  late final DocumentReference userDoc =
-  FirebaseFirestore.instance.collection('users').doc(uid);
+  DocumentReference get userDoc =>
+      FirebaseFirestore.instance.collection('users').doc(uid);
 
   BannerAd? _bannerAd;
   bool _isBannerLoaded = false;

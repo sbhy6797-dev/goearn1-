@@ -4,7 +4,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'dashboard_screen.dart';
 import 'payment_screen.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'notifications_screen.dart';
@@ -41,7 +40,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   }
 
-  // تحميل الرصيد من فايرستور
+
   Future<void> _loadCoins() async {
 
     final user = FirebaseAuth.instance.currentUser;
@@ -55,6 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (doc.exists) {
 
+      if (!mounted) return;
       setState(() {
         totalCoins = doc.data()?['totalCoins'] ?? 0;
       });
@@ -62,7 +62,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  // حفظ كود الإحالة فقط
+
   Future<void> _saveReferralCode() async {
 
     final user = FirebaseAuth.instance.currentUser;
@@ -102,20 +102,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _useFriendCode() async {
-
     final user = FirebaseAuth.instance.currentUser;
     final code = _friendCodeController.text.trim();
 
     if (user == null || code.isEmpty) return;
 
     if (code.length < 4) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter a valid referral code')),
       );
       return;
     }
-// 🔥 حطه هنا بالظبط
+
     if (code == referralCode) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('You cannot use your own code')),
       );
@@ -123,29 +126,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     if (_usedReferral) {
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Referral already used')),
       );
-
       return;
     }
 
     final query = await FirebaseFirestore.instance
         .collection('users')
         .where('referralCode', isEqualTo: code)
+        .limit(2)
         .get();
 
     if (query.docs.isEmpty) {
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Invalid referral code')),
       );
-
       return;
     }
-// 🔥 حماية من التكرار (مهم لجوجل)
+
     if (query.docs.length > 1) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Error: duplicate referral codes')),
       );
@@ -155,13 +161,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final friendDoc = query.docs.first;
 
     if (friendDoc.id == user.uid) {
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('You cannot use your own code')),
       );
-
       return;
     }
+
 
     await FirebaseFirestore.instance.runTransaction((transaction) async {
 
@@ -181,6 +188,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     });
 
+    if (!mounted) return;
     await _loadCoins();
 
     setState(() {
@@ -189,6 +197,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     _friendCodeController.clear();
 
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('🎉 You received 50 bonus coins (in-app rewards only)')),
     );
@@ -201,13 +210,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (user == null) return;
 
     try {
-      // 🔥 إعادة تسجيل الدخول بـ Google
-      final googleProvider = GoogleAuthProvider();
-
       final googleSignIn = GoogleSignIn();
       final googleUser = await googleSignIn.signIn();
 
-      final googleAuth = await googleUser!.authentication;
+      if (googleUser == null) return;
+
+      final googleAuth = await googleUser.authentication;
 
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
@@ -216,22 +224,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       await user.reauthenticateWithCredential(credential);
 
-      // 🔥 حذف بيانات المستخدم
       await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .delete();
 
-      // 🔥 حذف الحساب نهائي
       await user.delete();
+
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Account deleted successfully')),
       );
 
       Navigator.of(context).popUntil((route) => route.isFirst);
-
     } catch (e) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
@@ -750,8 +759,8 @@ Agree to these Terms
                               IconButton(
                                 icon: const Icon(
                                   Icons.notifications,
-                                  color: Colors.amber, // 🔥 لون ذهبي
-                                  size: 45, // تكبير الجرس
+                                  color: Colors.amber,
+                                  size: 45,
                                 ),
                                 onPressed: () {
                                   Navigator.push(
@@ -925,10 +934,10 @@ Agree to these Terms
 
                     const SizedBox(height: 40),
 
-                    // 🔴🔥 هنا بالظبط زر حذف الحساب (المكان الصح)
+
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red, // لون أحمر للتحذير
+                        backgroundColor: Colors.red,
                       ),
                       onPressed: () {
                         showDialog(
@@ -946,7 +955,7 @@ Agree to these Terms
                               TextButton(
                                 onPressed: () {
                                   Navigator.pop(context);
-                                  _deleteAccount(); // استدعاء حذف الحساب
+                                  _deleteAccount();
                                 },
                                 child: const Text('Delete'),
                               ),

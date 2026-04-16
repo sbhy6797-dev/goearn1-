@@ -6,16 +6,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
-import 'dashboard_screen.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 
-final GoogleSignIn _googleSignIn = GoogleSignIn(
-  scopes: ['email'],
-);
+import 'dashboard_screen.dart';
 
+final GoogleSignIn googleSignIn = GoogleSignIn(scopes: ['email']);
 final FirebaseAnalytics analytics = FirebaseAnalytics.instance;
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Firebase.initializeApp(
@@ -45,7 +43,49 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: HomeScreen(),
+      home: AuthGate(),
+    );
+  }
+}
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final user = snapshot.data;
+
+        if (user == null) return const HomeScreen();
+
+        return FutureBuilder<DocumentSnapshot>(
+          future: FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get(),
+          builder: (context, snap) {
+            if (!snap.hasData) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+
+            final data = snap.data?.data() as Map<String, dynamic>?;
+
+            final coins = data?['totalCoins'] ?? 0;
+
+            return DashboardScreen(totalCoins: coins);
+          },
+        );
+      },
     );
   }
 }
@@ -62,32 +102,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _signInWithGoogle() async {
     if (_isLoading) return;
+
     setState(() => _isLoading = true);
 
     try {
-
       await analytics.logEvent(
         name: 'login_attempt',
         parameters: {'method': 'google'},
       );
 
-      await _googleSignIn.signOut();
-      await FirebaseAuth.instance.signOut();
-
-      final googleUser = await _googleSignIn.signIn();
+      final googleUser = await googleSignIn.signIn();
 
       if (googleUser == null) {
-
         await analytics.logEvent(
           name: 'login_cancelled',
-          parameters: {'method': 'google'},
         );
-
-        if (mounted) setState(() => _isLoading = false);
         return;
       }
 
       final googleAuth = await googleUser.authentication;
+
+      if (googleAuth.accessToken == null || googleAuth.idToken == null) {
+        throw Exception("Missing Google token");
+      }
 
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
@@ -98,93 +135,48 @@ class _HomeScreenState extends State<HomeScreen> {
       await FirebaseAuth.instance.signInWithCredential(credential);
 
       final user = userCredential.user;
-      if (user == null) return;
 
+      if (user == null) throw Exception("Auth user is null");
 
-      await analytics.logEvent(
-        name: 'login_success',
-        parameters: {
-          'method': 'google',
-        },
-      );
-
-
-      await FirebaseCrashlytics.instance
-          .setUserIdentifier(user.uid);
+      await FirebaseCrashlytics.instance.setUserIdentifier(user.uid);
 
       final userRef =
       FirebaseFirestore.instance.collection('users').doc(user.uid);
 
-      await FirebaseFirestore.instance.runTransaction((transaction) async {
-        final snapshot = await transaction.get(userRef);
+      await userRef.set({
+        'email': user.email ?? '',
+        'displayName': user.displayName ?? '',
+        'photoURL': user.photoURL ?? '',
+        'lastLogin': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
-        if (!snapshot.exists) {
-          transaction.set(userRef, {
-            'email': user.email ?? '',
-            'displayName': user.displayName ?? '',
-            'photoURL': user.photoURL ?? '',
-            'totalCoins': 0,
-            'createdAt': FieldValue.serverTimestamp(),
-            'lastLogin': FieldValue.serverTimestamp(),
-          });
-        } else {
-          transaction.update(userRef, {
-            'lastLogin': FieldValue.serverTimestamp(),
-            'loginCount': FieldValue.increment(1),
-          });
-        }
-      });
-
-      final userDoc = await userRef.get();
-      final totalCoins = userDoc.data()?['totalCoins'] ?? 0;
+      await analytics.logEvent(
+        name: 'login_success',
+      );
 
       if (!mounted) return;
 
-      Navigator.pushReplacement(
+      Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
-          builder: (_) => DashboardScreen(totalCoins: totalCoins),
+          builder: (_) => const AuthGate(),
         ),
+            (route) => false,
       );
-
     } catch (e, stack) {
-
-      await FirebaseCrashlytics.instance.recordError(
-        e,
-        stack,
-        reason: 'Google Sign-In failed',
-        fatal: false,
-      );
-
-      await analytics.logEvent(
-        name: 'login_failed',
-        parameters: {'method': 'google'},
-      );
+      await FirebaseCrashlytics.instance.recordError(e, stack);
 
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Login failed. Please try again later"),
+          content: Text("Login failed. Try again"),
           backgroundColor: Colors.red,
         ),
       );
-
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
-
-  Future<void> _signOut() async {
-    await FirebaseAuth.instance.signOut();
-    await _googleSignIn.signOut();
-
-    if (!mounted) return;
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
-    );
   }
 
   @override
@@ -208,8 +200,8 @@ class _HomeScreenState extends State<HomeScreen> {
             right: 0,
             child: Image.asset(
               "assets/images/image_2.png",
-              fit: BoxFit.cover,
               height: 180,
+              fit: BoxFit.cover,
             ),
           ),
 
@@ -218,32 +210,27 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-
-                  const SizedBox(height: 40),
-
                   Image.asset("assets/images/image_1.png", height: 180),
 
                   const SizedBox(height: 40),
 
                   ElevatedButton(
+                    onPressed: _isLoading ? null : _signInWithGoogle,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.white,
                       minimumSize: const Size(double.infinity, 55),
                     ),
-                    onPressed: _isLoading ? null : _signInWithGoogle,
                     child: _isLoading
                         ? const CircularProgressIndicator()
                         : Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Image.asset("assets/images/image_3.png", height: 24),
+                        Image.asset("assets/images/image_3.png",
+                            height: 24),
                         const SizedBox(width: 10),
                         const Text(
                           "Continue with Google",
-                          style: TextStyle(
-                            color: Colors.black,
-                            fontSize: 16,
-                          ),
+                          style: TextStyle(color: Colors.black),
                         ),
                       ],
                     ),

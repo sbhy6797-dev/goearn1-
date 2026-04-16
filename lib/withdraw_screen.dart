@@ -28,7 +28,9 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   BannerAd? _bannerAd;
   bool _bannerLoaded = false;
 
-  final User user = FirebaseAuth.instance.currentUser!;
+  // ✅ FIX: safe nullable user instead of crash
+  final User? user = FirebaseAuth.instance.currentUser;
+
   late final String uid;
   late final String? email;
   late final DocumentReference userDoc;
@@ -36,11 +38,15 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   @override
   void initState() {
     super.initState();
-    uid = user.uid;
-    email = user.email;
-    userDoc = FirebaseFirestore.instance.collection('users').doc(uid);
 
-    _loadBanner();
+    // ✅ FIX: prevent crash if user == null
+    if (user != null) {
+      uid = user!.uid;
+      email = user!.email;
+      userDoc = FirebaseFirestore.instance.collection('users').doc(uid);
+
+      _loadBanner();
+    }
   }
 
   void _loadBanner() {
@@ -81,12 +87,13 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
 
     // ✅ Validation
     if (input.isEmpty) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             widget.type == 'paypal'
-                ? 'دخل ايميل PayPal'
-                : 'دخل رقم الموبايل',
+                ? 'Enter PayPal email'
+                : 'Enter phone number',
           ),
         ),
       );
@@ -95,21 +102,30 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
 
     if (widget.type == 'paypal') {
       if (!input.contains('@') || !input.contains('.')) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('PayPal email غير صحيح')),
+          const SnackBar(content: Text('Invalid PayPal email')),
         );
         return;
       }
     } else {
       if (input.length < 8) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('رقم الموبايل غير صحيح')),
+          const SnackBar(content: Text('Invalid phone number')),
         );
         return;
       }
     }
 
-    // 🔥 جلب التوكن (إضافة فقط بدون لمس باقي الكود)
+    if (user == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User not logged in')),
+      );
+      return;
+    }
+
     final userSnap = await FirebaseFirestore.instance
         .collection('users')
         .doc(uid)
@@ -123,16 +139,13 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       await FirebaseFirestore.instance.runTransaction((transaction) async {
         final snapshot = await transaction.get(userDoc);
 
-        int currentCoins = 0;
-        if (snapshot.exists && snapshot.data() != null) {
-          currentCoins = snapshot.get('totalCoins') ?? 0;
-        }
+        int currentCoins = snapshot.get('totalCoins') ?? 0;
 
         if (currentCoins < widget.coins) {
-          throw Exception('رصيدك غير كافي');
+          throw Exception('Insufficient balance');
         }
 
-        // ✅ خصم الرصيد
+
         transaction.set(
           userDoc,
           {
@@ -143,7 +156,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           SetOptions(merge: true),
         );
 
-        // ✅ إنشاء طلب سحب
+
         final withdrawRef = FirebaseFirestore.instance
             .collection('withdraw_requests')
             .doc();
@@ -157,7 +170,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           'account': input,
           'status': 'pending',
           'createdAt': FieldValue.serverTimestamp(),
-          'fcmToken': fcmToken, // 🔥 إضافة بدون حذف أي شيء
+          'fcmToken': fcmToken,
         });
       });
 
@@ -166,16 +179,21 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           : 'طلب سحب ${widget.type}: $input';
 
       await sendNotification(message);
-
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-              'تم إرسال طلب السحب Processing may take 3–7 business days.⏳'),
           backgroundColor: Colors.green,
+          duration: Duration(seconds: 5),
+          content: Text(
+            'Withdrawal Request Sent\n'
+                'Your withdrawal request is being processed.\n'
+                'Processing may take 3–7 business days.\n'
+                'Please wait for confirmation.',
+            softWrap: true,
+          ),
         ),
       );
 
-      // 🔥 إضافة إشعار داخل المستخدم بدون حذف أي شيء
       await FirebaseFirestore.instance
           .collection('users')
           .doc(uid)
@@ -186,17 +204,19 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
         'createdAt': FieldValue.serverTimestamp(),
         'read': false,
         'type': 'withdraw',
-        'status': 'pending',
       });
-
+      if (!mounted) return;
       Navigator.pop(context, widget.coins);
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.toString())),
       );
     }
 
-    setState(() => isProcessing = false);
+    if (mounted) {
+      setState(() => isProcessing = false);
+    }
   }
 
   @override
@@ -208,6 +228,13 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // ✅ FIX: safe UI guard (no crash)
+    if (user == null) {
+      return const Scaffold(
+        body: Center(child: Text("Not logged in")),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xff2EF1F7),
       body: SingleChildScrollView(
@@ -220,10 +247,11 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
             const SizedBox(height: 10),
             Text(
               '${widget.amount} ${widget.type == 'paypal' ? '\$' : 'ج'}',
-              style:
-              const TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                  fontSize: 36, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 25),
+
             TextField(
               controller: _controller,
               keyboardType: widget.type == 'paypal'
@@ -241,7 +269,9 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                 ),
               ),
             ),
+
             const SizedBox(height: 25),
+
             SizedBox(
               width: double.infinity,
               height: 55,
@@ -252,7 +282,9 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                     : const Text('Withdraw'),
               ),
             ),
+
             const SizedBox(height: 10),
+
             SizedBox(
               width: double.infinity,
               height: 55,
@@ -260,13 +292,13 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.grey,
                 ),
-                onPressed: () {
-                  Navigator.pop(context);
-                },
+                onPressed: () => Navigator.pop(context),
                 child: const Text('Cancel'),
               ),
             ),
+
             const SizedBox(height: 15),
+
             if (_bannerLoaded)
               SizedBox(
                 height: _bannerAd!.size.height.toDouble(),
