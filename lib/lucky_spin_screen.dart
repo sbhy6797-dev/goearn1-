@@ -77,37 +77,35 @@ class _LuckySpinScreenState extends State<LuckySpinScreen>
   // ================= Banner Ad =================
 
   void _loadBannerAd() {
+    _bannerAd?.dispose();
 
     _bannerAd = BannerAd(
-
-      adUnitId: 'ca-app-pub-3940256099942544/6300978111',
-
+      adUnitId: 'ca-app-pub-5925712456846655/9667012771',
       size: AdSize.banner,
-
       request: const AdRequest(),
-
       listener: BannerAdListener(
-
         onAdLoaded: (_) {
-
+          if (!mounted) return;
           setState(() {
-
             _isBannerLoaded = true;
-
           });
-
         },
 
         onAdFailedToLoad: (ad, error) {
-
           ad.dispose();
+          _isBannerLoaded = false;
 
+
+          Future.delayed(const Duration(seconds: 5), () {
+            if (mounted) {
+              _loadBannerAd();
+            }
+          });
         },
-
       ),
+    );
 
-    )..load();
-
+    _bannerAd!.load();
   }
 
   @override

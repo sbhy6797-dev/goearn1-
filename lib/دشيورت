@@ -20,18 +20,33 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
+  bool _isListening = false;
+
+  int getRemainingSeconds() {
+    if (boostEndTime == null) return 0;
+
+    final remaining = boostEndTime!.difference(DateTime.now()).inSeconds;
+
+    return remaining > 0 ? remaining : 0;
+  }
+
+  Timer? _uiTimer;
   int steps = 0;
   int coins = 0;
   int totalCoins = 0;
   int lastSensorSteps = 0;
 
-  // 👇 حطه هنا بالظبط
+  String getTodayKey() {
+    final now = DateTime.now();
+    return "${now.year}-${now.month.toString().padLeft(2,'0')}-${now.day.toString().padLeft(2,'0')}";
+  }
+
   List<int> speedLevels = [3, 5, 7];
 
   int initialSteps = 0;
   bool isFirstUpdate = true;
 
-  late StreamSubscription<StepCount> _stepSubscription;
+  StreamSubscription<StepCount>? _stepSubscription;
   late Stream<StepCount> _stepCountStream;
 
   final int maxSteps = 70000;
@@ -43,7 +58,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
   // ===== Speed Boost =====
   double boostMultiplier = 1.0;
-  Timer? countdownTimer;
+
   DateTime? boostEndTime;
   int remainingSeconds = 0;
 
@@ -54,35 +69,66 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   // ===== Ad Tracking =====
   int adsWatchedCount = 0;
 
-  // ✅ ضيفه هنا
   DateTime? lastAdTime;
 
+  bool canShowAd() {
+    if (!_isInterstitialReady) return false;
+    if (adsWatchedCount >= 20) return false;
+
+    if (lastAdTime == null) return true;
+
+    return DateTime.now().difference(lastAdTime!).inSeconds > 60;
+  }
+
+  void tryShowAd() {
+    if (!canShowAd()) return;
+
+    lastAdTime = DateTime.now();
+    _showInterstitial();
+  }
 
 // ===== Interstitial Ad =====
   InterstitialAd? _interstitialAd;
   bool _isInterstitialReady = false;
 
+  Future<void> registerAdWatch() async {
+    adsWatchedCount++;
+
+    await userDoc.set({
+      'adsWatchedToday': adsWatchedCount,
+      'adsDate': getTodayKey(),
+    }, SetOptions(merge: true));
+  }
+
   @override
   void initState() {
     super.initState();
+
     _loadLocalData();
 
+    _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+
+      setState(() {
+        remainingSeconds = getRemainingSeconds();
+      });
+    });
+
     totalCoins = widget.totalCoins;
+
     final user = FirebaseAuth.instance.currentUser!;
     uid = user.uid;
     userDoc = FirebaseFirestore.instance.collection('users').doc(uid);
 
     initApp();
 
-
-    Future.delayed(Duration(milliseconds: 800), () {
+    Future.delayed(const Duration(milliseconds: 800), () {
       _restoreTimerFromFirebase();
     });
 
-    // ✅ تحميل الإعلان أول ما الشاشة تفتح
     _loadInterstitial();
   }
-  // ===== RouteAware: اشترك في RouteObserver =====
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -95,12 +141,13 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
   @override
   void didPopNext() {
-    _restoreTimerFromFirebase(); // 👈 ده الحل السحري
+    _restoreTimerFromFirebase();
+    setState(() {});
   }
   @override
   void didPushNext() {
-    // المستخدم فتح شاشة جديدة
-    // نترك التايمر يعمل بالخلفية
+
+
   }
   @override
   void didPop() {
@@ -125,10 +172,9 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     });
   }
 
-  // ✅👇 حط الدالة هنا بالظبط
   void _loadInterstitial() {
     InterstitialAd.load(
-      adUnitId: 'ca-app-pub-3940256099942544/1033173712',
+      adUnitId: 'ca-app-pub-5925712456846655/5052040996',
       request: const AdRequest(),
       adLoadCallback: InterstitialAdLoadCallback(
         onAdLoaded: (ad) {
@@ -146,98 +192,96 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       ),
     );
   }
-// ✅ عرض الإعلان بعد الضغط على Convert
+
   void _showInterstitial() async {
-    if (_isInterstitialReady && _interstitialAd != null) {
-      _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
+    if (!_isInterstitialReady || _interstitialAd == null) return;
 
-        onAdDismissedFullScreenContent: (ad) async {
-          ad.dispose();
-          _loadInterstitial();
+    _interstitialAd!.fullScreenContentCallback =
+        FullScreenContentCallback(
+          onAdDismissedFullScreenContent: (ad) async {
+            ad.dispose();
+            _loadInterstitial();
 
-          final now = DateTime.now();
-          final today = DateTime(now.year, now.month, now.day);
+            if (mounted) {
+              await registerAdWatch();
+            }
 
-          DocumentSnapshot snapshot = await userDoc.get();
-          int adsToday = 0;
+          },
 
-          if (snapshot.exists) {
-            final data = snapshot.data() as Map<String, dynamic>;
-            adsToday = data['adsWatchedToday'] ?? 0;
-          }
+          onAdFailedToShowFullScreenContent: (ad, error) {
+            ad.dispose();
+            _loadInterstitial();
+          },
+        );
 
-          adsToday++;
-          adsWatchedCount++; // ✅ مهم جدًا
+    lastAdTime = DateTime.now();
 
-          await userDoc.set({
-            'adsWatchedToday': adsToday,
-            'lastAdDate': Timestamp.fromDate(today),
-          }, SetOptions(merge: true));
-        },
-
-        onAdFailedToShowFullScreenContent: (ad, error) {
-          ad.dispose();
-          _loadInterstitial();
-        },
-      );
-
-      _interstitialAd!.show();
-      _interstitialAd = null;
-      _isInterstitialReady = false;
-    }
+    _interstitialAd!.show();
+    _interstitialAd = null;
+    _isInterstitialReady = false;
   }
-
 
   Future<void> loadData() async {
     try {
       final snapshot = await userDoc.get();
       if (snapshot.exists) {
         final data = snapshot.data() as Map<String, dynamic>;
+
+        // ================= ADS LOGIC  =================
+        final todayKey = getTodayKey();
+        final savedDate = data['adsDate'];
+
+        int adsCount = data['adsWatchedToday'] ?? 0;
+
+        if (savedDate != todayKey) {
+          adsCount = 0;
+
+          await userDoc.set({
+            'adsWatchedToday': 0,
+            'adsDate': todayKey,
+          }, SetOptions(merge: true));
+        }
+
+        // ================= STATE UPDATE =================
         setState(() {
           steps = data['steps'] ?? 0;
           coins = data['coins'] ?? 0;
-          totalCoins = data['totalCoins'] ?? 0;
+          totalCoins = data['totalCoins'] ?? widget.totalCoins;
           initialSteps = data['initialSteps'] ?? 0;
           isFirstUpdate = data['isFirstUpdate'] ?? true;
-          adsWatchedCount = data['adsWatchedToday'] ?? 0;
+
+          adsWatchedCount = adsCount;
         });
-        // ✅ استرجاع التايمر
-        Timestamp? boostTime = data['boostEndTime'];
+
+        // ================= BOOST LOGIC =================
+        final boostTime = data['boostEndTime'];
 
         if (boostTime != null) {
-
-          DateTime endTime = boostTime.toDate();
-
-          final remaining = endTime.difference(DateTime.now()).inSeconds;
+          final DateTime endTime = boostTime.toDate();
+          final int remaining =
+              endTime.difference(DateTime.now()).inSeconds;
 
           if (remaining > 0) {
-
             setState(() {
-              boostEndTime = endTime;        // ✅ مرة واحدة بس
+              boostEndTime = endTime;
               remainingSeconds = remaining;
+              boostMultiplier =
+                  (data['boostMultiplier'] ?? 3).toDouble();
             });
-
-            activateSpeed(
-              data['boostMultiplier'] ?? 3,
-              remaining,
-              isRestore: true,
-            );
-
           } else {
-
-            if (remaining <= 0) {
+            setState(() {
               boostEndTime = null;
               remainingSeconds = 0;
               boostMultiplier = 1.0;
-            }
-
+            });
           }
         }
       }
     } catch (e) {
-      print('Error loading Firebase data: $e');
+      debugPrint('Error loading Firebase data: $e');
     }
   }
+
 
   Future<void> _restoreTimerFromFirebase() async {
     try {
@@ -253,7 +297,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       final remaining = endTime.difference(DateTime.now()).inSeconds;
 
       if (remaining > 0) {
-
         boostEndTime = endTime;
 
         activateSpeed(
@@ -262,23 +305,40 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
           isRestore: true,
         );
 
+
+        setState(() {
+          remainingSeconds = remaining;
+        });
+
       } else {
-
-        boostEndTime = null;
-        boostMultiplier = 1.0;
-        remainingSeconds = 0;
-
+        setState(() {
+          boostEndTime = null;
+          boostMultiplier = 1.0;
+          remainingSeconds = 0;
+        });
       }
-
     } catch (e) {
-      print("Timer restore error: $e");
+      debugPrint("Timer restore error: $e");
     }
   }
 
   void initPedometer() {
-    _stepCountStream = Pedometer.stepCountStream;
-    _stepSubscription =
-        _stepCountStream.listen(onStepCount, onError: onStepError);
+    if (_isListening) return;
+
+    _isListening = true;
+
+    try {
+      _stepCountStream = Pedometer.stepCountStream;
+
+      _stepSubscription = _stepCountStream.listen(
+        onStepCount,
+        onError: onStepError,
+        cancelOnError: false,
+      );
+    } catch (e) {
+      _isListening = false;
+      debugPrint("Pedometer init error: $e");
+    }
   }
 
   void onStepCount(StepCount event) {
@@ -295,9 +355,13 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     }
 
     if (diff > 0) {
+      int newSteps = (steps + diff).clamp(0, maxSteps);
+      int boostedSteps = (newSteps * boostMultiplier).floor();
+      int newCoins = (boostedSteps ~/ stepPerCoin) * 10;
+
       setState(() {
-        steps = (steps + diff).clamp(0, maxSteps);
-        coins = ((steps * boostMultiplier) ~/ stepPerCoin) * 10;
+        steps = newSteps;
+        coins = newCoins;
       });
 
       lastSensorSteps = event.steps;
@@ -310,9 +374,16 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     }
   }
 
-
   void onStepError(Object error) {
-    print("Step Error: $error");
+    debugPrint("Step Error: $error");
+
+    _stepSubscription?.cancel();
+    _stepSubscription = null;
+    _isListening = false;
+
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) initPedometer();
+    });
   }
 
   Future<void> convertCoins() async {
@@ -325,30 +396,15 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       initialSteps = 0;
       isFirstUpdate = true;
     });
+
     await _saveLocalData();
     await _updateFirebase();
 
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    tryShowAd();
 
-    DocumentSnapshot snapshot = await userDoc.get();
-    int adsToday = 0;
+    final adsToday = adsWatchedCount;
 
-    if (snapshot.exists) {
-      final data = snapshot.data() as Map<String, dynamic>;
-      Timestamp? lastAdDate = data['lastAdDate'];
-
-      if (lastAdDate != null &&
-          lastAdDate.toDate().year == today.year &&
-          lastAdDate.toDate().month == today.month &&
-          lastAdDate.toDate().day == today.day) {
-        adsToday = data['adsWatchedToday'] ?? 0;
-      } else {
-        adsToday = 0; // 🔥 reset اليوم الجديد
-      }
-    }
-
-    if (adsToday < 20 &&
+    if (adsToday < 30 &&
         _isInterstitialReady &&
         (lastAdTime == null ||
             DateTime.now().difference(lastAdTime!).inSeconds > 20)) {
@@ -363,25 +419,21 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
   Future<void> _updateFirebase() async {
     try {
+      final snapshot = await userDoc.get();
+      final data = snapshot.data() as Map<String, dynamic>?;
 
-      await _saveLocalData(); // ✔
+      final oldTotal = data?['totalCoins'] ?? 0;
+
+      final safeTotal = totalCoins < oldTotal ? oldTotal : totalCoins;
+
       await userDoc.set({
+        'totalCoins': safeTotal,
         'steps': steps,
         'coins': coins,
-        'totalCoins': totalCoins,
-        'initialSteps': initialSteps,
-        'isFirstUpdate': isFirstUpdate,
-        'adsWatchedToday': adsWatchedCount,
-
-        // ✅ أهم سطرين (الحل)
-        'boostEndTime': boostEndTime != null
-            ? Timestamp.fromDate(boostEndTime!)
-            : null,
-        'boostMultiplier': boostMultiplier,
-
       }, SetOptions(merge: true));
+
     } catch (e) {
-      print('Error updating Firebase: $e');
+      debugPrint('Error updating Firebase: $e');
     }
   }
 
@@ -407,10 +459,9 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     });
   }
 
+
   void activateSpeed(int speed, int secondsToAdd, {bool isRestore = false}) async {
-
     if (!isRestore) {
-
       if (boostEndTime != null && boostEndTime!.isAfter(DateTime.now())) {
         boostEndTime = boostEndTime!.add(Duration(seconds: secondsToAdd));
       } else {
@@ -423,58 +474,26 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       }, SetOptions(merge: true));
     }
 
-    countdownTimer?.cancel();
-
     setState(() {
       boostMultiplier = speed.toDouble();
-    });
-
-    countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-
-      if (boostEndTime == null) return;
-
-      final now = DateTime.now();
-      final remaining = boostEndTime!.difference(now).inSeconds;
-
-      if (!mounted) return;
-
-      if (remaining <= 0) {
-
-        timer.cancel();
-        countdownTimer = null;
-
-        if (!mounted) return;
-
-        setState(() {
-          boostMultiplier = 1.0;
-          remainingSeconds = 0;
-          boostEndTime = null;
-        });
-
-      } else {
-
-        setState(() {
-          remainingSeconds = remaining.clamp(0, 999999);
-        });
-
-      }
-
     });
   }
 
 
   @override
   void dispose() {
-
+    _uiTimer?.cancel();
     routeObserver.unsubscribe(this);
-    _stepSubscription.cancel();
+
+    try {
+      _stepSubscription?.cancel();
+    } catch (_) {}
+
+    _stepSubscription = null;
+    _isListening = false;
+
     _debounce?.cancel();
-    countdownTimer?.cancel();
+
     super.dispose();
   }
 
@@ -518,7 +537,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
           reward: 0,
 
-          speed: 3, // ✅ ثابت
+          speed: 3,
 
           duration: const Duration(minutes: 2),
 
@@ -548,7 +567,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
           reward: 0,
 
-          speed: 3, // ✅ سرعة ثابتة
+          speed: 3,
 
           duration: const Duration(minutes: 2),
 
@@ -559,7 +578,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             adsWatchedCount++;
             _updateFirebase();
 
-            activateSpeed(3, duration.inSeconds); // ✅ دائما x3
+            activateSpeed(3, duration.inSeconds);
 
           },
 
@@ -581,7 +600,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             const SizedBox(height: 20),
             _circleSteps(),
             const SizedBox(height: 10),
-            if (boostEndTime != null && remainingSeconds > 1)
+            if (getRemainingSeconds() > 0)
               Column(
                 children: [
                   Text(
@@ -590,7 +609,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                         fontWeight: FontWeight.bold, fontSize: 18),
                   ),
                   Text(
-                    "Time remaining: ${remainingSeconds > 0 ? remainingSeconds : 0} s | Ads watched: $adsWatchedCount",
+                    "Time remaining: ${getRemainingSeconds()} s | Ads watched: $adsWatchedCount",
                   ),
                 ],
               ),
@@ -676,8 +695,9 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             ),
             CustomPaint(
               size: const Size(240, 240),
-              painter: CircleProgressPainter(
-                  ((steps * boostMultiplier) / maxSteps).clamp(0.0, 1.0)),
+    painter: CircleProgressPainter(
+    (steps / maxSteps).clamp(0.0, 1.0)
+    ),
             ),
           ],
         ),
@@ -896,7 +916,7 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
     _isAdLoading = true;
 
     RewardedAd.load(
-      adUnitId: 'ca-app-pub-3940256099942544/5224354917',
+      adUnitId: 'ca-app-pub-5925712456846655/9841768010',
       request: const AdRequest(),
       rewardedAdLoadCallback: RewardedAdLoadCallback(
         onAdLoaded: (ad) {
@@ -912,19 +932,34 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
   }
 
   void _loadBannerAd() {
+
+    _bannerAd?.dispose();
+
     _bannerAd = BannerAd(
       size: AdSize.banner,
-      adUnitId: 'ca-app-pub-3940256099942544/6300978111',
+
+
+      adUnitId: 'ca-app-pub-5925712456846655/9667012771',
+
       request: const AdRequest(),
+
       listener: BannerAdListener(
-        onAdLoaded: (_) {
+        onAdLoaded: (ad) {
+          if (!mounted) return;
+
           setState(() {
             _isBannerReady = true;
           });
         },
+
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
-          print(error);
+          _isBannerReady = false;
+
+          debugPrint("Banner failed: ${error.message}");
+          Future.delayed(const Duration(seconds: 10), () {
+            _loadBannerAd();
+          });
         },
       ),
     );
@@ -936,7 +971,7 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
     if (_rewardedAd == null) return;
 
     _rewardedAd!.show(
-      onUserEarnedReward: (_, __) {
+      onUserEarnedReward: (ad, reward) {
         setState(() {
           _adWatched = true;
         });
@@ -984,7 +1019,7 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
               ),
             const SizedBox(height: 150),
             if (_isBannerReady)
-              Container(
+              SizedBox(
                 width: _bannerAd!.size.width.toDouble(),
                 height: _bannerAd!.size.height.toDouble(),
                 child: AdWidget(ad: _bannerAd!),

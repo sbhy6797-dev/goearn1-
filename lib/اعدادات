@@ -4,8 +4,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'dashboard_screen.dart';
 import 'payment_screen.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'notifications_screen.dart';
+
 
 class SettingsScreen extends StatefulWidget {
 
@@ -38,11 +40,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   }
 
-  // تحميل الرصيد من فايرستور
+
   Future<void> _loadCoins() async {
-
     final user = FirebaseAuth.instance.currentUser;
-
     if (user == null) return;
 
     final doc = await FirebaseFirestore.instance
@@ -50,16 +50,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .doc(user.uid)
         .get();
 
-    if (doc.exists) {
+    if (!mounted) return;
+
+    if (doc.exists && doc.data() != null) {
+      final data = doc.data() as Map<String, dynamic>;
 
       setState(() {
-        totalCoins = doc.data()?['totalCoins'] ?? 0;
+        totalCoins = data['totalCoins'] ?? 0;
       });
-
+    } else {
+      setState(() {
+        totalCoins = 0;
+      });
     }
   }
 
-  // حفظ كود الإحالة فقط
+
   Future<void> _saveReferralCode() async {
 
     final user = FirebaseAuth.instance.currentUser;
@@ -99,20 +105,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _useFriendCode() async {
-
     final user = FirebaseAuth.instance.currentUser;
     final code = _friendCodeController.text.trim();
 
     if (user == null || code.isEmpty) return;
 
     if (code.length < 4) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter a valid referral code')),
       );
       return;
     }
-// 🔥 حطه هنا بالظبط
+
     if (code == referralCode) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('You cannot use your own code')),
       );
@@ -120,29 +129,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     if (_usedReferral) {
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Referral already used')),
       );
-
       return;
     }
 
     final query = await FirebaseFirestore.instance
         .collection('users')
         .where('referralCode', isEqualTo: code)
+        .limit(2)
         .get();
 
     if (query.docs.isEmpty) {
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Invalid referral code')),
       );
-
       return;
     }
-// 🔥 حماية من التكرار (مهم لجوجل)
+
     if (query.docs.length > 1) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Error: duplicate referral codes')),
       );
@@ -152,13 +164,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final friendDoc = query.docs.first;
 
     if (friendDoc.id == user.uid) {
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('You cannot use your own code')),
       );
-
       return;
     }
+
 
     await FirebaseFirestore.instance.runTransaction((transaction) async {
 
@@ -178,6 +191,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     });
 
+    if (!mounted) return;
     await _loadCoins();
 
     setState(() {
@@ -186,8 +200,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     _friendCodeController.clear();
 
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('🎉 50 reward coins added to your account')),
+      const SnackBar(content: Text('🎉 You received 50 bonus coins (in-app rewards only)')),
     );
   }
 
@@ -198,26 +213,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (user == null) return;
 
     try {
-      // 🔥 إعادة تسجيل الدخول بـ Google
-      final googleProvider = GoogleAuthProvider();
-      await user.reauthenticateWithProvider(googleProvider);
+      final googleSignIn = GoogleSignIn();
+      final googleUser = await googleSignIn.signIn();
 
-      // 🔥 حذف بيانات المستخدم
+      if (googleUser == null) return;
+
+      final googleAuth = await googleUser.authentication;
+
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      await user.reauthenticateWithCredential(credential);
+
       await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .delete();
 
-      // 🔥 حذف الحساب نهائي
       await user.delete();
+
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Account deleted successfully')),
       );
 
       Navigator.of(context).popUntil((route) => route.isFirst);
-
     } catch (e) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
@@ -239,74 +265,196 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: const Text(
             """
 Effective date: Mar 16, 2026
-Welcome to GoEarn1 application. GoEarn1 respects and protects users’ privacy. This Privacy Policy explains how information is collected, used, and protected.
+Welcome to GoEarn1. Your privacy is important to us. This Privacy Policy explains how we collect, use, and protect your information when you use our mobile application.
 
+By using the application, you agree to the collection and use of information in accordance with this policy.
 
-1. البيانات التي نقوم بجمعها
-نقوم بجمع البيانات التالية عند استخدامك للتطبيق:
+1. Information We Collect
+1.1 Account Information
 
-- بيانات الخطوات اليومية (Pedometer) لتحسين تجربة المشي وتحقيق أهدافك اليومية.
-- بيانات الجهاز والتفاعل مع التطبيق، مثل استخدام التطبيق، الأخطاء، وإحصاءات الأداء (Firebase Analytics).
-- رموز الإشعارات (FCM Token) لإرسال الإشعارات اليومية وتنبيهات النشاط.
-- معلومات الاختيارات والإعدادات التي تحددها داخل التطبيق.
+When you sign in using Google or email, we may collect:
 
----
+Email address
+User ID
+Account authentication information
 
-2. كيفية استخدام البيانات
-نستخدم البيانات التي نجمعها للأغراض التالية:
+This information is used to create and manage your account securely.
 
-- تحسين تجربة المستخدم داخل التطبيق.
-- عرض الإعلانات المناسبة من خلال Google AdMob.
-- إرسال إشعارات تنبيهية لتشجيع النشاط البدني وتحقيق الأهداف.
-- تحسين أداء التطبيق ومنع الأخطاء التقنية.
-"نقوم بجمع البريد الإلكتروني للمستخدم لأغراض التعرف على الحساب."
----
+1.2 Activity & Usage Data
 
-3. خدمات الطرف الثالث
-قد يتم مشاركة بعض البيانات مع خدمات طرف ثالث موثوقة لأغراض التحليل والإعلانات، مثل:
+The app collects step and activity data using your device sensors:
 
-- Google AdMob
-- Firebase Analytics و Firebase Crashlytics
-- Google Play Services
+Daily step count
+Activity progress
+Walking goals
 
-نحن نضمن أن هذه الخدمات تتبع سياسات خصوصية صارمة وتستخدم البيانات فقط للأغراض المصرح بها.
-ا يُطلب من المستخدمين النقر على الإعلانات، كما لا يتم تقديم أي مكافآت أو حوافز مقابل مشاهدة أو التفاعل مع الإعلانات."
----
+This information is used to:
 
-4. حقوق المستخدم
-لديك الحق في:
+Track user progress
+Provide rewards
+Improve user experience
 
-- طلب حذف بياناتك الشخصية من تطبيقنا.
-- إيقاف أو تعطيل الإشعارات من داخل التطبيق.
-- تعديل إعدادات الخصوصية داخل التطبيق.
+We do not collect precise location data.
 
----
+1.3 Device Information
 
-5. حفظ البيانات وأمانها
-نستخدم تقنيات وحماية حديثة لضمان عدم وصول أي طرف غير مخول إلى بياناتك.
-نحتفظ بالبيانات فقط طالما كانت مطلوبة لتحسين تجربة المستخدم وتشغيل التطبيق.
+We may collect limited device information such as:
 
-لا يتم مكافأة المستخدم على التفاعل مع الإعلانات
-لا يحصل المستخدمون على أي أموال حقيقية مقابل دعوة الأصدقاء أو استخدام التطبيق. جميع المكافآت هي مكافآت ترويجية داخل التطبيق فقط، ولا يمكن ضمان تحويلها إلى أموال نقدية.
----
-قوم بتخزين رموز الجهاز (Device Tokens) لاستخدامها في إرسال الإشعارات للمستخدمين وتحسين تجربة التواصل داخل التطبيق.
-6. التواصل معنا
-لأي استفسارات أو طلبات تتعلق بالخصوصية، يمكنك التواصل معنا عبر البريد الإلكتروني:
+Device model
+Operating system
+App version
+Crash reports
+
+This helps improve app performance and stability.
+
+1.4 Advertising Data
+
+We use Google AdMob to display ads. AdMob may collect:
+
+Advertising ID
+Device information
+Ad interaction data
+
+This helps display relevant ads and improve ad performance.
+
+For more information:
+https://policies.google.com/privacy
+
+1.5 Notifications Data
+
+We may collect:
+
+Firebase Cloud Messaging Token
+
+This is used to:
+
+Send notifications
+Inform users about rewards
+App updates
+
+Users can disable notifications at any time from device settings.
+
+2. How We Use Information
+
+We use collected information to:
+
+Provide and maintain the app
+Track activity and rewards
+Improve app performance
+Prevent fraud and abuse
+Display advertisements
+Send notifications
+
+We do not sell personal data to third parties.
+
+3. Third-Party Services
+
+The app may use trusted third-party services:
+
+Google AdMob (Ads)
+Firebase Authentication
+Firebase Firestore
+Firebase Analytics
+Firebase Crashlytics
+Google Play Services
+
+These services operate under their own privacy policies.
+
+4. Rewards & Virtual Currency
+Coins earned in the app are virtual rewards
+Coins do not represent real money
+Rewards are promotional and subject to review
+Withdrawal requests may be approved, delayed, or rejected
+
+The app does not guarantee earnings or income.
+
+5. Referral Program
+Users can invite friends
+Users may receive promotional coins
+Abuse of referral system may result in account suspension
+6. Data Security
+
+We take appropriate measures to protect your information:
+
+Secure Firebase infrastructure
+Encrypted connections
+Limited data access
+
+However, no system is completely secure.
+
+7. User Rights
+
+You have the right to:
+
+Access your data
+Delete your account
+Stop using the app
+Disable notifications
+
+Users can delete their account directly from inside the app
+or request deletion via email at: sbhy6797@gmail.com
+
+8. Children's Privacy
+
+This application is not intended for children under 13.
+
+We do not knowingly collect personal data from children.
+
+If we discover such data, it will be deleted immediately.
+
+9. Data Retention
+
+We retain user data only for as long as necessary to provide our services.
+
+- Account data is stored until the user deletes their account
+- Some data may be retained for a limited period for legal, security, and fraud prevention purposes
+- After account deletion, user data is permanently deleted within 30 days
+
+10. Data Deletion
+
+Users have the right to delete their data at any time.
+
+You can request deletion by:
+
+- Using the "Delete Account" option inside the app
+- Or contacting us via email at: sbhy6797@gmail.com
+
+All user data will be permanently deleted within 30 days of the request.
+
+11. Ads Policy
+
+The app displays ads provided by Google AdMob.
+
+We:
+
+Do not force users to click ads
+Do not reward users for clicking ads
+Do not display misleading ads
+
+Ads follow Google AdMob policies.
+
+12. Changes to Privacy Policy
+
+We may update this Privacy Policy from time to time.
+
+Changes will be posted inside the app.
+
+Continued use means acceptance of updates.
+
+13. Contact Us
+
+If you have any questions, contact us:
+
+Email:
 sbhy6797@gmail.com
 
----
-- العملات داخل التطبيق لا تمثل أموالًا حقيقية ولا يمكن تحويلها إلى نقد، وهي مخصصة للاستخدام الترفيهي فقط داخل التطبيق.
-- يتضمن التطبيق نظام إحالة (دعوة الأصدقاء) حيث يمكن للمستخدمين دعوة أصدقائهم والحصول على مكافآت داخل التطبيق.
-- جميع العملات (Coins) هي مكافآت افتراضية تُستخدم داخل التطبيق فقط ولا يمكن استخدامها خارجه.
-- التطبيق لا يضمن أي أرباح مالية أو دخل حقيقي للمستخدمين.
+14. Consent
 
-7. التعديلات على سياسة الخصوصية
-يجوز لنا تحديث هذه السياسة من وقت لآخر لتعكس أي تغييرات في التطبيق أو متطلبات قانونية.
-ستتم إشعار المستخدمين بأي تغييرات كبيرة عبر التطبيق أو البريد الإلكتروني إذا توفر.
+By using GoEarn1, you agree to:
 
----
-
-باستخدامك لتطبيق GoEarn1، فإنك توافق على جمع واستخدام بياناتك كما هو موضح في سياسة الخصوصية هذه.
+Data collection
+Data usage
+Privacy policy terms
           """,
           ),
         ),
@@ -321,7 +469,7 @@ sbhy6797@gmail.com
   }
 
   void _openPrivacyPolicyLink() async {
-    final url = Uri.parse('https://sites.google.com/view/goearn1-privacy-/home');
+    final url = Uri.parse("https://goearn1-app.blogspot.com/p/privacy-policy.html");
 
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
@@ -341,58 +489,202 @@ Terms & Conditions
 
 Effective date: Mar 16, 2026
 
-By downloading or using this application, you agree to be bound by these Terms & Conditions. If you do not agree, please do not use the app.
+Welcome to GoEarn1. By downloading or using this application, you agree to comply with and be bound by the following Terms and Conditions.
 
-Important Notice:
-Coins are virtual rewards used داخل التطبيق فقط ولا يمكن تحويلها إلى أموال حقيقية.
-Reward requests may be reviewed to ensure fair usage and prevent abuse.
+If you do not agree with these terms, please do not use the application.
 
-1. Use of the App
-You agree to use the application in a lawful and appropriate manner. Any misuse, fraud, or abuse of the app may result in suspension or termination of your account.
+1. Use of the Application
 
-2. Accounts
-You are responsible for maintaining the security of your account and any activity performed under it. We are not responsible for unauthorized access.
+GoEarn1 is a fitness and rewards application designed to encourage physical activity. Users can earn virtual rewards by walking, completing tasks, and participating in promotional features within the app.
+
+You agree to:
+
+Use the app only for lawful purposes
+Not attempt to manipulate or exploit the system
+Not create multiple accounts for unfair advantage
+
+Violation of these rules may result in account suspension or termination.
+
+2. User Accounts
+
+To use certain features, you may be required to create an account using:
+
+Google Sign-in
+Email authentication
+
+You are responsible for:
+
+Maintaining account security
+Protecting login credentials
+All activity under your account
+
+We are not responsible for unauthorized account access.
 
 3. Virtual Currency (Coins)
-- Coins earned within the app are virtual and have no guaranteed real-world monetary value.
-- Coins may be modified, reset, or removed at any time at the discretion of the developer.
-- Coins cannot be transferred between accounts unless explicitly allowed by the system.
 
-4. Rewards & Referrals
-- Referral rewards are granted under specific conditions defined by the app.
-- Abuse of the referral system or attempts to manipulate the system may result in loss of rewards or account suspension.
+The application uses virtual coins as a reward system.
 
-5. 5. Reward Requests
-- Reward requests may be reviewed to ensure fair usage and prevent abuse.
-- We reserve the right to approve, delay, or reject any withdrawal request.
-- 5. Reward Requests may be denied in cases including but not limited to:
-  - Suspicious or fraudulent activity
-  - Violation of app policies
-  - Invalid or incorrect payment information
-- Processing times for withdrawals may vary.
-- Rewards are virtual and may be redeemed for in-app benefits or limited promotional rewards at the developer’s discretion. No guaranteed monetary value is provided.
-- We do not guarantee that all withdrawal requests will be approved.
+Important:
+
+Coins are virtual rewards
+Coins do not represent real-world currency
+Coins have no guaranteed monetary value
+Coins may be modified, reset, or removed at any time
+
+Coins are used for:
+
+Unlocking rewards
+Promotional redemption
+In-app benefits
+4. Rewards & Withdrawals
+
+Users may request rewards using earned coins.
+
+Important conditions:
+
+All reward requests are subject to review
+Processing time may vary (typically 3–7 business days)
+We reserve the right to approve or reject requests
+Incorrect payment details may result in rejection
+
+Withdrawal requests may be denied in cases including:
+
+Fraudulent activity
+Multiple accounts
+Suspicious behavior
+Violation of terms
+
+Rewards are promotional and not guaranteed.
+
+The app does not guarantee earnings or income.
+
+5. Referral Program
+
+GoEarn1 may include a referral system allowing users to invite friends.
+
+Rules:
+
+Users may receive promotional coins
+Self-referrals are not allowed
+Abuse of referral system may result in account suspension
+
+We reserve the right to remove referral rewards if abuse is detected.
 
 6. Advertisements
-This application displays advertisements provided by third-party services such as Google AdMob. We are not responsible for the content or behavior of these ads.
 
-7. Third-Party Services
-The app may use third-party services including:
-- Firebase (Authentication, Analytics, Crashlytics, Cloud Firestore)
-- Google AdMob
-These services operate under their own privacy policies.
+The app displays advertisements from third-party providers such as:
 
-8. Limitation of Liability
-We are not liable for any direct or indirect damages resulting from the use or inability to use the app.
+Google AdMob
 
-9. Changes to Terms
-We reserve the right to update or modify these Terms & Conditions at any time without prior notice. Continued use of the app means you accept the updated terms.
+We:
 
-10. Account Termination
-We reserve the right to suspend or terminate any account that violates these Terms & Conditions.
+Do not require users to click ads
+Do not reward users for clicking ads
+Do not control ad content
 
-11. Acceptance
-By using this application, you acknowledge that you have read, understood, and agreed to these Terms & Conditions.
+Users interact with ads at their own discretion.
+
+7. Fair Usage Policy
+
+To maintain fairness:
+
+Users must use the app naturally
+Automated systems are prohibited
+Emulator usage may be restricted
+Artificial step generation is prohibited
+
+Violation may result in:
+
+Reward removal
+Account suspension
+Account termination
+8. Account Suspension or Termination
+
+We reserve the right to suspend or terminate accounts for:
+
+Fraud
+Abuse
+Multiple accounts
+Policy violations
+
+Suspended accounts may lose:
+
+Coins
+Rewards
+Withdraw eligibility
+9. Limitation of Liability
+
+GoEarn1 is provided "as is" without warranties.
+
+We are not responsible for:
+
+Loss of rewards
+Technical issues
+Third-party service interruptions
+
+Use of the app is at your own risk.
+
+10. Third-Party Services
+
+The app uses third-party services including:
+
+Google AdMob
+Firebase Authentication
+Firebase Firestore
+Firebase Analytics
+Google Play Services
+
+These services operate under their own policies.
+
+11. Updates to the Terms
+
+We may update these Terms & Conditions at any time.
+
+Changes will be posted inside the app.
+
+Continued use of the app means acceptance of updated terms.
+
+12. User Data & Privacy
+
+Your privacy is important.
+
+Please review our Privacy Policy for details about:
+
+Data collection
+Data usage
+Data protection
+
+Using the app means you agree to our Privacy Policy.
+
+13. Minimum Requirements
+
+To use rewards:
+
+Minimum coin threshold may apply
+Processing time may vary
+One account per user allowed
+14. Age Requirement
+
+Users must be:
+
+13 years or older
+
+Children under 13 should not use the app.
+
+15. Contact Information
+
+If you have any questions:
+
+Email:
+sbhy6797@gmail.com
+
+16. Acceptance
+
+By using GoEarn1, you confirm that you:
+
+Read these Terms
+Understand these Terms
+Agree to these Terms
             """,
           ),
         ),
@@ -408,7 +700,7 @@ By using this application, you acknowledge that you have read, understood, and a
 
   // ✅ Terms Link
   void _openTermsLink() async {
-    final url = Uri.parse('https://sites.google.com/view/goearn1-/home');
+    final url = Uri.parse('https://goearn1-app.blogspot.com/p/terms-conditions.html');
 
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
@@ -448,21 +740,84 @@ By using this application, you acknowledge that you have read, understood, and a
 
                     const SizedBox(height: 20),
 
+
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
 
-                          Image.asset('assets/images/image_9.png', width: 45),
-
-                          const SizedBox(width: 10),
-
-                          const Text(
-                            'Settings',
-                            style: TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold),
+                          Row(
+                            children: [
+                              Image.asset('assets/images/image_9.png', width: 45),
+                              const SizedBox(width: 10),
+                              const Text(
+                                'Settings',
+                                style: TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
                           ),
+                          Stack(
+                            children: [
+
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.notifications,
+                                  color: Colors.amber,
+                                  size: 45,
+                                ),
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => const NotificationsScreen(),
+                                    ),
+                                  );
+                                },
+                              ),
+
+                              // 🔴 Badge
+                              Positioned(
+                                right: 6,
+                                top: 6,
+                                child: StreamBuilder(
+                                  stream: FirebaseFirestore.instance
+                                      .collection('users')
+                                      .doc(FirebaseAuth.instance.currentUser!.uid)
+                                      .collection('notifications')
+                                      .where('read', isEqualTo: false)
+                                      .snapshots(),
+                                  builder: (context, snapshot) {
+                                    if (!snapshot.hasData) return const SizedBox();
+
+                                    int count = snapshot.data!.docs.length;
+
+                                    if (count == 0) return const SizedBox();
+
+                                    return Container(
+                                      padding: const EdgeInsets.all(5),
+                                      decoration: const BoxDecoration(
+                                        color: Colors.red,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Text(
+                                        count > 9 ? "9+" : "$count",
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          )
+
                         ],
                       ),
                     ),
@@ -586,10 +941,10 @@ By using this application, you acknowledge that you have read, understood, and a
 
                     const SizedBox(height: 40),
 
-                    // 🔴🔥 هنا بالظبط زر حذف الحساب (المكان الصح)
+
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red, // لون أحمر للتحذير
+                        backgroundColor: Colors.red,
                       ),
                       onPressed: () {
                         showDialog(
@@ -607,7 +962,7 @@ By using this application, you acknowledge that you have read, understood, and a
                               TextButton(
                                 onPressed: () {
                                   Navigator.pop(context);
-                                  _deleteAccount(); // استدعاء حذف الحساب
+                                  _deleteAccount();
                                 },
                                 child: const Text('Delete'),
                               ),
@@ -633,15 +988,7 @@ By using this application, you acknowledge that you have read, understood, and a
                   GestureDetector(
                     onTap: () {
 
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => DashboardScreen(
-                            totalCoins: totalCoins,
-                          ),
-                        ),
-                      );
-
+                      Navigator.pop(context);
                     },
                     child: Image.asset(
                         'assets/images/image_7.png',

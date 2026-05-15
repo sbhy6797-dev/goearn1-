@@ -2,11 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
 import 'withdraw_screen.dart';
-import 'dashboard_screen.dart';
-import 'settings_screen.dart';
-
 class PaymentScreen extends StatefulWidget {
   const PaymentScreen({super.key});
 
@@ -17,22 +13,24 @@ class PaymentScreen extends StatefulWidget {
 class _PaymentScreenState extends State<PaymentScreen> {
   int totalCoins = 0;
 
-  final String uid = FirebaseAuth.instance.currentUser!.uid;
-  DocumentReference get userDoc =>
-      FirebaseFirestore.instance.collection('users').doc(uid);
+  DocumentReference? getUserDoc() {
+    final id = FirebaseAuth.instance.currentUser?.uid;
+    if (id == null) return null;
+
+    return FirebaseFirestore.instance.collection('users').doc(id);
+  }
 
   BannerAd? _bannerAd;
-  bool _isBannerLoaded = false;
 
   final List<Map<String, dynamic>> payments = [
-    {"type": "paypal", "amount": 6, "coins": 90000, "image": "assets/images/paypal.png", "currency": "\$"},
-    {"type": "paypal", "amount": 4, "coins": 70000, "image": "assets/images/paypal.png", "currency": "\$"},
+    {"type": "paypal", "amount": 6, "coins": 90, "image": "assets/images/paypal.png", "currency": "\$"},
+    {"type": "paypal", "amount": 4, "coins": 70, "image": "assets/images/paypal.png", "currency": "\$"},
     {"type": "paypal", "amount": 2, "coins": 50, "image": "assets/images/paypal.png", "currency": "\$"},
-    {"type": "fawry", "amount": 200, "coins": 90000, "image": "assets/images/fawry.png", "currency": "ج"},
-    {"type": "fawry", "amount": 150, "coins": 70000, "image": "assets/images/fawry.png", "currency": "ج"},
-    {"type": "fawry", "amount": 100, "coins": 50000, "image": "assets/images/fawry.png", "currency": "ج"},
-    {"type": "vodafone", "amount": 200, "coins": 90000, "image": "assets/images/vodafone.png", "currency": "ج"},
-    {"type": "vodafone", "amount": 150, "coins": 70000, "image": "assets/images/vodafone.png", "currency": "ج"},
+    {"type": "bitcoin", "amount": 6, "coins": 90, "image": "assets/images/faucetpay.png", "currency": "\$"},
+    {"type": "bitcoin", "amount": 4, "coins": 70, "image": "assets/images/faucetpay.png", "currency": "\$"},
+    {"type": "bitcoin", "amount": 2, "coins": 50, "image": "assets/images/faucetpay.png", "currency": "\$"},
+    {"type": "vodafone", "amount": 200, "coins": 90, "image": "assets/images/vodafone.png", "currency": "ج"},
+    {"type": "vodafone", "amount": 150, "coins": 70, "image": "assets/images/vodafone.png", "currency": "ج"},
     {"type": "vodafone", "amount": 100, "coins": 50, "image": "assets/images/vodafone.png", "currency": "ج"},
   ];
 
@@ -44,24 +42,64 @@ class _PaymentScreenState extends State<PaymentScreen> {
   }
 
   Future<void> _loadUserCoins() async {
-    final snapshot = await userDoc.get();
-    if (snapshot.exists) {
+    final docRef = getUserDoc();
+    if (docRef == null) return;
+
+    try {
+      final snapshot = await docRef.get();
+
+      if (!mounted) return;
+
+      if (!snapshot.exists || snapshot.data() == null) {
+        setState(() {
+          totalCoins = 0;
+        });
+        return;
+      }
+
+      final data = snapshot.data() as Map<String, dynamic>;
+
+      if (!mounted) return;
+
       setState(() {
-        totalCoins = snapshot['totalCoins'] ?? 0;
+        totalCoins = data['totalCoins'] ?? 0;
+      });
+
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        totalCoins = 0;
       });
     }
   }
 
   void _loadBannerAd() {
+    _bannerAd?.dispose();
+
     _bannerAd = BannerAd(
-      adUnitId: 'ca-app-pub-3940256099942544/6300978111',
+      adUnitId: 'ca-app-pub-5925712456846655/9667012771',
       size: AdSize.banner,
       request: const AdRequest(),
       listener: BannerAdListener(
-        onAdLoaded: (_) => setState(() => _isBannerLoaded = true),
-        onAdFailedToLoad: (ad, error) => ad.dispose(),
+        onAdLoaded: (ad) {
+          if (!mounted) return;
+          setState(() {
+            _bannerAd = ad as BannerAd;
+          });
+        },
+
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+
+          Future.delayed(const Duration(seconds: 10), () {
+            if (mounted) _loadBannerAd();
+          });
+        },
       ),
-    )..load();
+    );
+
+    _bannerAd!.load();
   }
 
   void handleWithdraw(Map<String, dynamic> item) async {
@@ -141,42 +179,21 @@ class _PaymentScreenState extends State<PaymentScreen> {
               },
             ),
           ),
-          if (_isBannerLoaded)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 40),
-              child: SizedBox(
-                height: _bannerAd!.size.height.toDouble(),
-                width: _bannerAd!.size.width.toDouble(),
-                child: AdWidget(ad: _bannerAd!),
-              ),
-            ),
-        ],
-      ),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.only(bottom: 15),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            GestureDetector(
-              onTap: () => Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (_) =>  DashboardScreen(totalCoins: totalCoins)),
-              ),
-              child: Image.asset('assets/images/image_7.png', width: 40),
-            ),
-            Image.asset('assets/images/image_8.png', width: 40),
-            GestureDetector(
-              onTap: () => Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => SettingsScreen(totalCoins: totalCoins),
+          if (_bannerAd != null)
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 40),
+                child: SizedBox(
+                  height: _bannerAd!.size.height.toDouble(),
+                  width: _bannerAd!.size.width.toDouble(),
+                  child: AdWidget(ad: _bannerAd!),
                 ),
               ),
-              child: Image.asset('assets/images/image_9.png', width: 40),
-            ),
-          ],
-        ),
+            )
+        ],
       ),
+
     );
   }
 }

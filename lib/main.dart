@@ -16,6 +16,7 @@ import 'login_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 
 // ================= GLOBAL =================
 
@@ -219,7 +220,6 @@ void smartNotificationEngine() async {
 }
 
 // ================= SCHEDULE NOTIFICATIONS =================
-
 Future<void> scheduleDailyNotification(int id, int hour, int minute) async {
   if (!notificationsEnabled) return;
 
@@ -251,9 +251,12 @@ Future<void> scheduleDailyNotification(int id, int hour, int minute) async {
         priority: Priority.high,
       ),
     ),
-    androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+
+    androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+
     uiLocalNotificationDateInterpretation:
     UILocalNotificationDateInterpretation.absoluteTime,
+
     matchDateTimeComponents: DateTimeComponents.time,
   );
 }
@@ -265,6 +268,10 @@ Future<void> main() async {
 
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  await FirebaseAppCheck.instance.activate(
+    androidProvider: AndroidProvider.playIntegrity,
   );
 
   setupCrashlytics();
@@ -442,6 +449,8 @@ class MyApp extends StatefulWidget {
 }
 class _MyAppState extends State<MyApp> {
 
+  bool isStepAvailable = true;
+
   Future<bool> hasSeenPermissionDialogs() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('seen_permission_dialogs') ?? false;
@@ -561,6 +570,53 @@ class _MyAppState extends State<MyApp> {
   DateTime? _lastSave;
   int _lastSavedSteps = 0;
 
+  void _listenSteps() async {
+
+    if (!isStepAvailable) {
+      debugPrint("Step counter not supported on this device");
+      return;
+    }
+
+    final status = await Permission.activityRecognition.status;
+
+    if (!status.isGranted) {
+      debugPrint("Permission not granted");
+      return;
+    }
+
+    try {
+      _stepSub = Pedometer.stepCountStream.listen(
+            (event) {
+          _handleStep(event);
+        },
+
+        onError: (error) async {
+          debugPrint("STEP ERROR: $error");
+          isStepAvailable = false;
+
+          await _stepSub?.cancel();
+
+          await FirebaseCrashlytics.instance.recordError(
+            error,
+            null,
+            fatal: false,
+          );
+        },
+
+        cancelOnError: true,
+      );
+    } catch (e, stack) {
+      debugPrint("Pedometer init error: $e");
+
+      isStepAvailable = false;
+
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        fatal: false,
+      );
+    }
+  }
 
   Future<void> _loadSteps(User user) async {
     try {
@@ -669,14 +725,6 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
-  void _listenSteps() async {
-    final status = await Permission.activityRecognition.status;
-    if (!status.isGranted) return;
-
-    _stepSub = Pedometer.stepCountStream.listen((event) {
-      _handleStep(event);
-    });
-  }
 
   void _handleStep(StepCount event) async {
     _startSteps ??= event.steps;
@@ -782,7 +830,6 @@ class _MyAppState extends State<MyApp> {
     _stepSub?.cancel();
     super.dispose();
   }
-
 
   @override
   Widget build(BuildContext context) {

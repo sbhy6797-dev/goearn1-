@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
@@ -5,19 +6,32 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
-import 'dashboard_screen.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'login_screen.dart';
+import 'main_screen.dart';
 
-final GoogleSignIn _googleSignIn = GoogleSignIn();
+final GoogleSignIn googleSignIn = GoogleSignIn();
+final FirebaseAnalytics analytics = FirebaseAnalytics.instance;
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // تفعيل Crashlytics
-  FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+  FlutterError.onError =
+      FirebaseCrashlytics.instance.recordFlutterFatalError;
+
+  PlatformDispatcher.instance.onError = (error, stack) {
+    FirebaseCrashlytics.instance.recordError(
+      error,
+      stack,
+      reason: 'Unhandled async error',
+      fatal: false,
+    );
+    return true;
+  };
 
   runApp(const MyApp());
 }
@@ -29,7 +43,54 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: HomeScreen(),
+      home: AuthGate(),
+    );
+  }
+}
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final user = snapshot.data;
+
+        if (user == null) return const LoginPage();
+
+        return StreamBuilder<DocumentSnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .snapshots(),
+          builder: (context, snap) {
+
+            if (snap.connectionState == ConnectionState.waiting) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+
+            if (!snap.hasData || !snap.data!.exists) {
+              return const LoginPage();
+            }
+
+            final data = snap.data!.data() as Map<String, dynamic>;
+
+            final coins = data['totalCoins'] ?? 0;
+
+            return MainScreen(totalCoins: coins);
+          },
+        );
+      },
     );
   }
 }
@@ -44,18 +105,91 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = false;
 
-  /// تسجيل الدخول بواسطة Google Sign-In
+
+  Future<void> ensureUserDataComplete(
+      DocumentReference userRef,
+      Map<String, dynamic> data,
+      ) async {
+
+    Map<String, dynamic> update = {};
+
+    void check(String key, dynamic value) {
+      if (!data.containsKey(key) && value != null) {
+        update[key] = value;
+      }
+    }
+
+    check('uid', userRef.id);
+
+    check('todaySteps', 0);
+    check('totalSteps', 0);
+
+    check('coins', 0);
+    check('totalCoins', 0);
+
+    check('adsWatchedToday', 0);
+
+    check('boostMultiplier', 1);
+
+    check('usedReferral', false);
+
+    check('isActive', true);
+    check('isBanned', false);
+
+    check(
+      'referralCode',
+      userRef.id.substring(0, 8).toUpperCase(),
+    );
+
+    check(
+      'createdAt',
+      FieldValue.serverTimestamp(),
+    );
+
+    check(
+      'lastLogin',
+      FieldValue.serverTimestamp(),
+    );
+
+    check('fcmToken', '');
+
+    update['loginCount'] = FieldValue.increment(1);
+
+    update['lastUpdate'] = FieldValue.serverTimestamp();
+
+    if (update.isNotEmpty) {
+      await userRef.set(update, SetOptions(merge: true));
+    }
+  }
+
   Future<void> _signInWithGoogle() async {
     if (_isLoading) return;
+
     setState(() => _isLoading = true);
 
     try {
+      await analytics.logEvent(
+        name: 'login_attempt',
+        parameters: {'method': 'google'},
+      );
 
+      final googleUser = await googleSignIn
+          .signIn()
+          .timeout(const Duration(seconds: 10));
 
-      final googleUser = await _googleSignIn.signIn();
-      if (googleUser == null) return;
+      if (googleUser == null) {
+        await analytics.logEvent(
+          name: 'login_cancelled',
+        );
+        return;
+      }
 
       final googleAuth = await googleUser.authentication;
+
+      if (googleAuth.accessToken == null || googleAuth.idToken == null) {
+        throw Exception("Missing Google token");
+      }
+
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
@@ -65,134 +199,146 @@ class _HomeScreenState extends State<HomeScreen> {
       await FirebaseAuth.instance.signInWithCredential(credential);
 
       final user = userCredential.user;
-      if (user == null) return;
+
+      if (user == null) throw Exception("Auth user is null");
+
+      await FirebaseCrashlytics.instance.setUserIdentifier(user.uid);
 
       final userRef =
       FirebaseFirestore.instance.collection('users').doc(user.uid);
 
-      // Firestore: إنشاء مستخدم جديد بطريقة آمنة
-      await FirebaseFirestore.instance.runTransaction((transaction) async {
-        final snapshot = await transaction.get(userRef);
-        if (!snapshot.exists) {
-          transaction.set(userRef, {
-            'email': user.email,
-            'displayName': user.displayName ?? '',
-            'totalCoins': 0, // Coins يبدأ بصفر
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        }
-      });
+      final doc = await userRef.get().timeout(const Duration(seconds: 10));
+      if (!doc.exists) {
 
-      // قراءة totalCoins الحالي بطريقة آمنة
-      final userDoc = await userRef.get();
-      final totalCoins = userDoc.data()?['totalCoins'] ?? 0;
+        await userRef.set({
+          'email': user.email ?? '',
+          'displayName': user.displayName ?? '',
+          'photoURL': user.photoURL ?? '',
+
+          'coins': 0,
+          'totalCoins': 0,
+
+          'todaySteps': 0,
+          'totalSteps': 0,
+
+          'adsWatchedToday': 0,
+          'lastAdWatchTime': null,
+
+          'boostMultiplier': 1,
+          'boostEndTime': null,
+
+          'loginCount': 1,
+          'createdAt': FieldValue.serverTimestamp(),
+          'lastLogin': FieldValue.serverTimestamp(),
+          'lastUpdate': FieldValue.serverTimestamp(),
+
+          'fcmToken': '',
+
+          'referralCode': user.uid.substring(0, 8).toUpperCase(),
+          'usedReferral': false,
+
+          'isActive': true,
+          'isBanned': false,
+
+          'uid': user.uid,
+        });
+
+      } else {
+
+
+        final data = doc.data() as Map<String, dynamic>;
+
+        await ensureUserDataComplete(userRef, data);
+
+        await userRef.set({
+          'email': user.email ?? '',
+          'displayName': user.displayName ?? '',
+          'photoURL': user.photoURL ?? '',
+          'lastLogin': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+
+      await analytics.logEvent(
+        name: 'login_success',
+      );
+
+    } catch (e, stack) {
+
+      debugPrint(e.toString());
+      debugPrint(stack.toString());
+
+      await FirebaseCrashlytics.instance.recordError(e, stack);
 
       if (!mounted) return;
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => DashboardScreen(totalCoins: totalCoins),
-        ),
-      );
-    }
-    catch (e) {
-      print("🔥 ERROR: $e");
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString()),
+        const SnackBar(
+          content: Text("Login failed"),
+          backgroundColor: Colors.red,
         ),
       );
-    }
 
-    finally {
-      if (mounted) setState(() => _isLoading = false);
+    } finally {
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
-
-  /// تسجيل الخروج بطريقة آمنة
-  Future<void> _signOut() async {
-    await _googleSignIn.signOut();
-    await FirebaseAuth.instance.signOut();
-    if (!mounted) return;
-    // الرجوع للشاشة الرئيسية
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF37F4FA), Color(0xFF45F3C4)],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF37F4FA), Color(0xFF45F3C4)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
               ),
             ),
           ),
+
           Positioned(
             bottom: 0,
             left: 0,
             right: 0,
             child: Image.asset(
               "assets/images/image_2.png",
-              fit: BoxFit.cover,
               height: 180,
+              fit: BoxFit.cover,
             ),
           ),
+
           SafeArea(
             child: Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Image.asset("assets/images/image_1.png", height: 190),
+                  Image.asset("assets/images/image_1.png", height: 180),
+
                   const SizedBox(height: 40),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(30),
+
+                  ElevatedButton(
+                    onPressed: _isLoading ? null : _signInWithGoogle,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      minimumSize: const Size(double.infinity, 55),
+                    ),
+                    child: _isLoading
+                        ? const CircularProgressIndicator()
+                        : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Image.asset("assets/images/image_3.png",
+                            height: 24),
+                        const SizedBox(width: 10),
+                        const Text(
+                          "Continue with Google",
+                          style: TextStyle(color: Colors.black),
                         ),
-                        minimumSize: const Size(double.infinity, 55),
-                        elevation: 5,
-                      ),
-                      onPressed: _isLoading ? null : _signInWithGoogle,
-                      child: _isLoading
-                          ? const SizedBox(
-                        height: 24,
-                        width: 24,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 3,
-                          color: Colors.black,
-                        ),
-                      )
-                          : Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Image.asset("assets/images/image_3.png",
-                              height: 24),
-                          const SizedBox(width: 12),
-                          const Text(
-                            "Continue with Google",
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black,
-                            ),
-                          ),
-                        ],
-                      ),
+                      ],
                     ),
                   ),
                 ],

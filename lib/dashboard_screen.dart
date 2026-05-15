@@ -5,9 +5,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
-import 'payment_screen.dart';
-import 'settings_screen.dart';
 import 'lucky_spin_screen.dart';
 import 'main.dart';
 // ================= Dashboard Screen =================
@@ -20,7 +19,7 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
-
+  bool _isListening = false;
 
   int getRemainingSeconds() {
     if (boostEndTime == null) return 0;
@@ -46,7 +45,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   int initialSteps = 0;
   bool isFirstUpdate = true;
 
-  late StreamSubscription<StepCount> _stepSubscription;
+  StreamSubscription<StepCount>? _stepSubscription;
   late Stream<StepCount> _stepCountStream;
 
   final int maxSteps = 70000;
@@ -168,13 +167,14 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     initPedometer();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _showCongratulationScreen();
     });
   }
 
   void _loadInterstitial() {
     InterstitialAd.load(
-      adUnitId: 'ca-app-pub-3940256099942544/1033173712',
+      adUnitId: 'ca-app-pub-5925712456846655/5052040996',
       request: const AdRequest(),
       adLoadCallback: InterstitialAdLoadCallback(
         onAdLoaded: (ad) {
@@ -323,9 +323,22 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   }
 
   void initPedometer() {
-    _stepCountStream = Pedometer.stepCountStream;
-    _stepSubscription =
-        _stepCountStream.listen(onStepCount, onError: onStepError);
+    if (_isListening) return;
+
+    _isListening = true;
+
+    try {
+      _stepCountStream = Pedometer.stepCountStream;
+
+      _stepSubscription = _stepCountStream.listen(
+        onStepCount,
+        onError: onStepError,
+        cancelOnError: false,
+      );
+    } catch (e) {
+      _isListening = false;
+      debugPrint("Pedometer init error: $e");
+    }
   }
 
   void onStepCount(StepCount event) {
@@ -342,9 +355,13 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     }
 
     if (diff > 0) {
+      int newSteps = (steps + diff).clamp(0, maxSteps);
+      int boostedSteps = (newSteps * boostMultiplier).floor();
+      int newCoins = (boostedSteps ~/ stepPerCoin) * 10;
+
       setState(() {
-        steps = (steps + diff).clamp(0, maxSteps);
-        coins = ((steps * boostMultiplier) ~/ stepPerCoin) * 10;
+        steps = newSteps;
+        coins = newCoins;
       });
 
       lastSensorSteps = event.steps;
@@ -357,9 +374,16 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     }
   }
 
-
   void onStepError(Object error) {
     debugPrint("Step Error: $error");
+
+    _stepSubscription?.cancel();
+    _stepSubscription = null;
+    _isListening = false;
+
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) initPedometer();
+    });
   }
 
   Future<void> convertCoins() async {
@@ -380,7 +404,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
     final adsToday = adsWatchedCount;
 
-    if (adsToday < 10 &&
+    if (adsToday < 30 &&
         _isInterstitialReady &&
         (lastAdTime == null ||
             DateTime.now().difference(lastAdTime!).inSeconds > 20)) {
@@ -437,6 +461,8 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
 
   void activateSpeed(int speed, int secondsToAdd, {bool isRestore = false}) async {
+
+    if (!mounted) return;
     if (!isRestore) {
       if (boostEndTime != null && boostEndTime!.isAfter(DateTime.now())) {
         boostEndTime = boostEndTime!.add(Duration(seconds: secondsToAdd));
@@ -449,7 +475,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
         'boostMultiplier': speed,
       }, SetOptions(merge: true));
     }
-
+    if (!mounted) return;
     setState(() {
       boostMultiplier = speed.toDouble();
     });
@@ -460,13 +486,21 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   void dispose() {
     _uiTimer?.cancel();
     routeObserver.unsubscribe(this);
-    _stepSubscription.cancel();
+
+    try {
+      _stepSubscription?.cancel();
+    } catch (_) {}
+
+    _stepSubscription = null;
+    _isListening = false;
+
     _debounce?.cancel();
 
     super.dispose();
   }
 
   void showLuckySpin() {
+    if (!mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -498,63 +532,52 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   }
 
   void showAdSpeedBoost() {
+    if (!mounted) return;
 
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => CongratulationScreen(
-
           reward: 0,
-
           speed: 3,
-
           duration: const Duration(minutes: 2),
-
           onClaim: (reward) {},
 
-          onSpeedBoost: (speed, duration) {
+          onSpeedBoost: (speed, duration) async {
+            if (!mounted) return;
 
             adsWatchedCount++;
-            _updateFirebase();
+            await _updateFirebase();
+
+            if (!mounted) return;
 
             activateSpeed(3, duration.inSeconds);
-
           },
-
         ),
       ),
     );
-
   }
 
   void _showCongratulationScreen() {
+    if (!mounted) return;
 
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => CongratulationScreen(
-
           reward: 0,
-
           speed: 3,
-
           duration: const Duration(minutes: 2),
-
           onClaim: (reward) {},
-
           onSpeedBoost: (speed, duration) {
-
             adsWatchedCount++;
             _updateFirebase();
 
             activateSpeed(3, duration.inSeconds);
-
           },
-
         ),
       ),
     );
-
   }
 
   // ================= UI =================
@@ -587,7 +610,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             const SizedBox(height: 20),
             _convertButtonWithBanner(),
             const Spacer(),
-            _bottomNav(),
           ],
         ),
       ),
@@ -665,7 +687,8 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             CustomPaint(
               size: const Size(240, 240),
               painter: CircleProgressPainter(
-                  ((steps * boostMultiplier) / maxSteps).clamp(0.0, 1.0)),
+                  (steps / maxSteps).clamp(0.0, 1.0)
+              ),
             ),
           ],
         ),
@@ -771,37 +794,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     );
   }
 
-  Widget _bottomNav() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          Image.asset('assets/images/image_7.png', width: 40),
-          GestureDetector(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const PaymentScreen()),
-              );
-            },
-            child: Image.asset('assets/images/image_8.png', width: 40),
-          ),
-          GestureDetector(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) =>
-                        SettingsScreen(totalCoins: totalCoins)),
-              );
-            },
-            child: Image.asset('assets/images/image_9.png', width: 40),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 // =================== Circle Progress Painter ===================
@@ -884,33 +876,39 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
     _isAdLoading = true;
 
     RewardedAd.load(
-      adUnitId: 'ca-app-pub-3940256099942544/5224354917',
+      adUnitId: 'ca-app-pub-5925712456846655/9841768010',
       request: const AdRequest(),
       rewardedAdLoadCallback: RewardedAdLoadCallback(
         onAdLoaded: (ad) {
           _rewardedAd = ad;
           _isAdLoading = false;
-          setState(() {});
+
+          if (mounted) {
+            setState(() {});
+          }
         },
-        onAdFailedToLoad: (_) {
+
+        onAdFailedToLoad: (error) {
           _isAdLoading = false;
+
+
+          Future.delayed(const Duration(seconds: 5), () {
+            if (mounted) {
+              _loadRewardedAd();
+            }
+          });
         },
       ),
     );
   }
 
   void _loadBannerAd() {
-
     _bannerAd?.dispose();
 
     _bannerAd = BannerAd(
       size: AdSize.banner,
-
-
-      adUnitId: 'ca-app-pub-3940256099942544/6300978111',
-
+      adUnitId: 'ca-app-pub-5925712456846655/9667012771',
       request: const AdRequest(),
-
       listener: BannerAdListener(
         onAdLoaded: (ad) {
           if (!mounted) return;
@@ -922,11 +920,16 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
 
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
-          _isBannerReady = false;
 
-          debugPrint("Banner failed: ${error.message}");
-          Future.delayed(const Duration(seconds: 10), () {
-            _loadBannerAd();
+          if (!mounted) return;
+
+          setState(() {
+            _isBannerReady = false;
+          });
+
+
+          Future.delayed(const Duration(seconds: 5), () {
+            if (mounted) _loadBannerAd();
           });
         },
       ),

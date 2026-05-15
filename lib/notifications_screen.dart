@@ -5,7 +5,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 class NotificationsScreen extends StatelessWidget {
   const NotificationsScreen({super.key});
 
-  // ================= FORMAT DATE =================
   String formatSmartDate(DateTime dt) {
     final now = DateTime.now();
     final diff = now.difference(dt).inDays;
@@ -74,8 +73,27 @@ class NotificationsScreen extends StatelessWidget {
 
               if (data == null) return const SizedBox();
 
-              final title = (data['title'] ?? 'Notification').toString();
-              final body = (data['body'] ?? '').toString();
+              // ================= TYPE SYSTEM =================
+              final type = (data['type'] ?? 'general').toString();
+
+              IconData icon = Icons.notifications;
+              Color iconColor = Colors.blue;
+
+              String title = (data['title'] ?? 'Notification').toString();
+              String body = (data['body'] ?? '').toString();
+
+              if (type == "withdraw_success") {
+                icon = Icons.check_circle;
+                iconColor = Colors.green;
+                title = "Withdrawal Completed 🎉";
+              }
+
+              if (type == "withdraw_failed") {
+                icon = Icons.error;
+                iconColor = Colors.red;
+                title = "Withdrawal Failed ❌";
+              }
+
               final isRead = data['read'] == true;
 
               final timestamp = data['createdAt'];
@@ -95,12 +113,6 @@ class NotificationsScreen extends StatelessWidget {
 
                 onDismissed: (_) async {
                   await doc.reference.delete();
-
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Notification deleted")),
-                    );
-                  }
                 },
 
                 child: InkWell(
@@ -122,7 +134,7 @@ class NotificationsScreen extends StatelessWidget {
                       border: Border.all(
                         color: isRead
                             ? Colors.grey.shade200
-                            : Colors.blue,
+                            : iconColor,
                       ),
                     ),
 
@@ -131,12 +143,8 @@ class NotificationsScreen extends StatelessWidget {
 
                         // ================= ICON =================
                         CircleAvatar(
-                          backgroundColor:
-                          isRead ? Colors.grey : Colors.blue,
-                          child: const Icon(
-                            Icons.notifications,
-                            color: Colors.white,
-                          ),
+                          backgroundColor: iconColor,
+                          child: Icon(icon, color: Colors.white),
                         ),
 
                         const SizedBox(width: 12),
@@ -153,9 +161,7 @@ class NotificationsScreen extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
-                                  color: isRead
-                                      ? Colors.black
-                                      : Colors.blue,
+                                  color: isRead ? Colors.black : iconColor,
                                 ),
                               ),
 
@@ -218,11 +224,7 @@ class NotificationsScreen extends StatelessWidget {
                         ),
 
                         if (!isRead)
-                          const Icon(
-                            Icons.circle,
-                            color: Colors.blue,
-                            size: 10,
-                          ),
+                          Icon(Icons.circle, color: iconColor, size: 10),
                       ],
                     ),
                   ),

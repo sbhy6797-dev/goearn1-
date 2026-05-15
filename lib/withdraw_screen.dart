@@ -2,6 +2,29 @@ import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'dart:async';
+
+Future<double> getBtcPrice() async {
+  try {
+    final res = await http.get(
+      Uri.parse(
+        'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
+      ),
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception("Failed to load price");
+    }
+
+    final data = jsonDecode(res.body);
+
+    return (data['bitcoin']['usd'] as num).toDouble();
+  } catch (e) {
+    return 0;
+  }
+}
 
 class WithdrawScreen extends StatefulWidget {
   final String type;
@@ -22,11 +45,27 @@ class WithdrawScreen extends StatefulWidget {
 }
 
 class _WithdrawScreenState extends State<WithdrawScreen> {
+
   final TextEditingController _controller = TextEditingController();
+
+  final TextEditingController walletController = TextEditingController();
+
+  double btcPrice = 0;
+
+  Timer? _timer;
+
+  Future<void> loadPrice() async {
+    btcPrice = await getBtcPrice();
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   bool isProcessing = false;
 
   BannerAd? _bannerAd;
-  bool _bannerLoaded = false;
+  bool _isBannerReady = false;
 
   // ✅ FIX: safe nullable user instead of crash
   final User? user = FirebaseAuth.instance.currentUser;
@@ -39,26 +78,51 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   void initState() {
     super.initState();
 
-    // ✅ FIX: prevent crash if user == null
     if (user != null) {
       uid = user!.uid;
       email = user!.email;
       userDoc = FirebaseFirestore.instance.collection('users').doc(uid);
 
-      _loadBanner();
+      _loadBannerAd();
+      loadPrice();
+
+      _timer = Timer.periodic(const Duration(seconds: 60), (_) {
+        loadPrice();
+      });
     }
   }
 
-  void _loadBanner() {
+  void _loadBannerAd() {
+    _bannerAd?.dispose();
+
     _bannerAd = BannerAd(
-      adUnitId: 'ca-app-pub-3940256099942544/6300978111',
+      adUnitId: 'ca-app-pub-5925712456846655/9667012771',
       size: AdSize.banner,
       request: const AdRequest(),
       listener: BannerAdListener(
-        onAdLoaded: (_) => setState(() => _bannerLoaded = true),
-        onAdFailedToLoad: (ad, _) => ad.dispose(),
+        onAdLoaded: (ad) {
+          if (!mounted) return;
+          setState(() {
+            _isBannerReady = true;
+          });
+        },
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+
+          if (!mounted) return;
+
+          setState(() {
+            _isBannerReady = false;
+          });
+
+          Future.delayed(const Duration(seconds: 5), () {
+            if (mounted) _loadBannerAd();
+          });
+        },
       ),
-    )..load();
+    );
+
+    _bannerAd!.load();
   }
 
   Future<void> sendNotification(String message) async {
@@ -85,35 +149,116 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
 
     final input = _controller.text.trim();
 
-    // ✅ Validation
-    if (input.isEmpty) {
+    final double usd = widget.amount.toDouble();
+
+
+    if (widget.type == 'bitcoin' && btcPrice <= 0) {
+
       if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            widget.type == 'paypal'
-                ? 'Enter PayPal email'
-                : 'Enter phone number',
-          ),
+        const SnackBar(
+          content: Text("BTC price not loaded"),
         ),
       );
+
       return;
+    }
+
+
+    double btcAmount = 0;
+
+    if (widget.type == 'bitcoin' && btcPrice > 0) {
+      btcAmount = usd / btcPrice;
+    }
+
+    // ✅ Validation
+    if (widget.type == 'paypal' && input.isEmpty) {
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enter PayPal email'),
+        ),
+      );
+
+      return;
+    }
+
+    if (widget.type == 'vodafone' && input.isEmpty) {
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enter Vodafone number'),
+        ),
+      );
+
+      return;
+    }
+
+    if (widget.type == 'bitcoin') {
+
+      final wallet = walletController.text.trim();
+
+      if (wallet.isEmpty || wallet.length < 20) {
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Enter Bitcoin wallet'),
+          ),
+        );
+
+        return;
+      }
     }
 
     if (widget.type == 'paypal') {
       if (!input.contains('@') || !input.contains('.')) {
         if (!mounted) return;
+
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid PayPal email')),
+          const SnackBar(
+            content: Text('Invalid PayPal email'),
+          ),
         );
+
         return;
       }
-    } else {
+    }
+
+    else if (widget.type == 'vodafone') {
       if (input.length < 8) {
         if (!mounted) return;
+
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid phone number')),
+          const SnackBar(
+            content: Text('Invalid phone number'),
+          ),
         );
+
+        return;
+      }
+    }
+
+    else if (widget.type == 'bitcoin') {
+
+      final wallet = walletController.text.trim();
+
+      if (wallet.isEmpty || wallet.length < 20) {
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Enter Bitcoin wallet'),
+          ),
+        );
+
         return;
       }
     }
@@ -136,47 +281,44 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     setState(() => isProcessing = true);
 
     try {
-      await FirebaseFirestore.instance.runTransaction((transaction) async {
-        final snapshot = await transaction.get(userDoc);
 
-        int currentCoins = snapshot.get('totalCoins') ?? 0;
+      final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
 
-        if (currentCoins < widget.coins) {
-          throw Exception('Insufficient balance');
-        }
+      final userSnap = await userRef.get();
+      int currentCoins = userSnap.data()?['totalCoins'] ?? 0;
 
-
-        transaction.set(
-          userDoc,
-          {
-            'totalCoins': currentCoins - widget.coins,
-            'email': email,
-            'uid': uid,
-          },
-          SetOptions(merge: true),
-        );
+      if (currentCoins < widget.coins) {
+        throw Exception('Insufficient balance');
+      }
 
 
-        final withdrawRef = FirebaseFirestore.instance
-            .collection('withdraw_requests')
-            .doc();
+      await userRef.update({
+        'totalCoins': currentCoins - widget.coins,
+      });
 
-        transaction.set(withdrawRef, {
-          'uid': uid,
-          'email': email,
-          'type': widget.type,
-          'amount': widget.amount,
-          'coins': widget.coins,
-          'account': input,
-          'status': 'pending',
-          'createdAt': FieldValue.serverTimestamp(),
-          'fcmToken': fcmToken,
-        });
+
+      await FirebaseFirestore.instance
+          .collection('withdraw_requests')
+          .add({
+        'uid': uid,
+        'type': widget.type,
+        'wallet': walletController.text.trim(),
+        'email': email,
+        'amount': widget.amount,
+        'coins': widget.coins,
+        'btc_amount': btcAmount,
+        'btc_price': btcPrice,
+        'status': 'pending',
+        'processed': false,
+        'createdAt': FieldValue.serverTimestamp(),
+        'fcmToken': fcmToken,
       });
 
       final message = widget.type == 'paypal'
           ? 'طلب سحب PayPal: $input'
-          : 'طلب سحب ${widget.type}: $input';
+          : widget.type == 'vodafone'
+          ? 'طلب سحب Vodafone: $input'
+          : 'طلب سحب Bitcoin: ${walletController.text.trim()}';
 
       await sendNotification(message);
       if (!mounted) return;
@@ -221,14 +363,15 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
 
   @override
   void dispose() {
+    _timer?.cancel();
     _controller.dispose();
+    walletController.dispose();
     _bannerAd?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // ✅ FIX: safe UI guard (no crash)
     if (user == null) {
       return const Scaffold(
         body: Center(child: Text("Not logged in")),
@@ -241,37 +384,98 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
         padding: const EdgeInsets.fromLTRB(20, 60, 20, 20),
         child: Column(
           children: [
-            Image.asset('assets/images/${widget.type}.png', width: 90),
+
+            Image.asset(
+              widget.type == 'bitcoin'
+                  ? 'assets/images/faucetpay.png'
+                  : 'assets/images/${widget.type}.png',
+              width: 90,
+            ),
+
             const SizedBox(height: 20),
+
             const Text('You are withdrawing'),
+
             const SizedBox(height: 10),
+
             Text(
               '${widget.amount} ${widget.type == 'paypal' ? '\$' : 'ج'}',
               style: const TextStyle(
-                  fontSize: 36, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 25),
-
-            TextField(
-              controller: _controller,
-              keyboardType: widget.type == 'paypal'
-                  ? TextInputType.emailAddress
-                  : TextInputType.phone,
-              decoration: InputDecoration(
-                hintText: widget.type == 'paypal'
-                    ? 'PayPal Email'
-                    : 'Phone Number',
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(25),
-                  borderSide: BorderSide.none,
-                ),
+                fontSize: 36,
+                fontWeight: FontWeight.bold,
               ),
             ),
 
             const SizedBox(height: 25),
 
+
+            if (widget.type == 'paypal' ||
+                widget.type == 'vodafone')
+              TextField(
+                controller: _controller,
+                keyboardType: widget.type == 'vodafone'
+                    ? TextInputType.phone
+                    : TextInputType.text,
+                decoration: InputDecoration(
+                  hintText: widget.type == 'paypal'
+                      ? 'PayPal Email'
+                      : widget.type == 'vodafone'
+                      ? 'Vodafone Number'
+                      : 'FaucetPay Wallet Address',
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(25),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: 15),
+
+            // 🟡 Bitcoin Wallet (فقط لو Bitcoin)
+            if (widget.type == 'bitcoin')
+              TextField(
+                controller: walletController,
+                decoration: InputDecoration(
+                  hintText: 'Bitcoin Wallet Address',
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(25),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+
+            if (widget.type == 'bitcoin')
+              const SizedBox(height: 15),
+
+            // 💰 BTC PRICE (فقط Bitcoin)
+            if (widget.type == 'bitcoin') ...[
+              Text(
+                btcPrice == 0
+                    ? "Loading BTC price..."
+                    : "BTC Price: \$${btcPrice.toStringAsFixed(2)}",
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+
+              const SizedBox(height: 5),
+
+              Text(
+                btcPrice == 0
+                    ? "Calculating..."
+                    : "You will receive: ${(widget.amount / btcPrice).toStringAsFixed(8)} BTC",
+                style: const TextStyle(
+                  color: Colors.green,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 25),
+
+            // 🔘 Withdraw Button
             SizedBox(
               width: double.infinity,
               height: 55,
@@ -285,6 +489,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
 
             const SizedBox(height: 10),
 
+            // 🔘 Cancel Button
             SizedBox(
               width: double.infinity,
               height: 55,
@@ -299,7 +504,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
 
             const SizedBox(height: 15),
 
-            if (_bannerLoaded)
+            if (_isBannerReady)
               SizedBox(
                 height: _bannerAd!.size.height.toDouble(),
                 width: _bannerAd!.size.width.toDouble(),

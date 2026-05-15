@@ -1,210 +1,144 @@
-import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+name: goearn1
+description: "A new Flutter project."
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. This is preferred for private packages.
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
-class NotificationsScreen extends StatelessWidget {
-  const NotificationsScreen({super.key});
+# The following defines the version and build number for your application.
+# A version number is three numbers separated by dots, like 1.2.43
+# followed by an optional build number separated by a +.
+# Both the version and the builder number may be overridden in flutter
+# build by specifying --build-name and --build-number, respectively.
+# In Android, build-name is used as versionName while build-number used as versionCode.
+# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
+# In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
+# Read more about iOS versioning at
+# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
+# In Windows, build-name is used as the major, minor, and patch parts
+# of the product and file versions while build-number is used as the build suffix.
+version: 1.0.0+12
 
-  @override
-  Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
+environment:
+  sdk: ^3.10.4
 
-    if (user == null) {
-      return const Scaffold(
-        body: Center(
-          child: Text("Please login first"),
-        ),
-      );
-    }
+# Dependencies specify other packages that your package needs in order to work.
+# To automatically upgrade your package dependencies to the latest versions
+# consider running `flutter pub upgrade --major-versions`. Alternatively,
+# dependencies can be manually updated by changing the version numbers below to
+# the latest version available on pub.dev. To see which dependencies have newer
+# versions available, run `flutter pub outdated`.
+dependencies:
 
-    final uid = user.uid;
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF6F7FB),
 
-      appBar: AppBar(
-        title: const Text("Notifications"),
-        centerTitle: true,
-      ),
+  firebase_auth: ^5.0.0
+  firebase_core: ^3.15.2
+  google_sign_in: ^6.2.0
+  google_mobile_ads: ^7.0.0
+  shared_preferences: ^2.1.1
+  share_plus: ^7.2.1
+  cloud_firestore: ^5.6.12
+  permission_handler: ^11.3.1
+  firebase_analytics: ^11.6.0
+  pedometer: ^4.0.1
 
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('notifications')
-            .orderBy('createdAt', descending: true)
-            .snapshots(),
+  timezone: ^0.9.2
+  firebase_messaging: ^15.2.10
+  firebase_crashlytics: ^4.3.10
+  flutter_local_notifications: ^17.0.0
+  android_alarm_manager_plus: 5.0.0
+  awesome_notifications: ^0.11.0
+  device_info_plus: ^10.1.0
+  url_launcher: ^6.2.5
+  confetti: ^0.7.0
 
-        builder: (context, snapshot) {
 
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
 
-          if (snapshot.hasError) {
-            return const Center(
-              child: Text("Something went wrong"),
-            );
-          }
 
-          final docs = snapshot.data?.docs ?? [];
 
-          if (docs.isEmpty) {
-            return const Center(
-              child: Text("No notifications yet"),
-            );
-          }
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(12),
-            itemCount: docs.length,
 
-            itemBuilder: (context, i) {
 
-              final doc = docs[i];
-              final data = doc.data() as Map<String, dynamic>?;
 
-              if (data == null) {
-                return const SizedBox();
-              }
+  flutter:
+    sdk: flutter
 
-              final title = (data['title'] ?? 'Notification').toString();
-              final body = (data['body'] ?? '').toString();
-              final isRead = data['read'] == true;
 
-              return Dismissible(
-                key: Key(doc.id),
-                direction: DismissDirection.endToStart,
 
-                background: Container(
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.only(right: 20),
-                  color: Colors.red,
-                  child: const Icon(Icons.delete, color: Colors.white),
-                ),
 
-                onDismissed: (_) async {
-                  await doc.reference.delete();
-                },
+cupertino_icons: ^1.0.8
 
-                child: InkWell(
-                  onTap: () async {
-                    await doc.reference.update({'read': true});
-                  },
+firebase_database: ^11.1.0
+firebase_storage: ^11.1.0
 
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.all(15),
 
-                    decoration: BoxDecoration(
-                      color: isRead
-                          ? Colors.white
-                          : const Color(0xFFE8F0FF),
 
-                      borderRadius: BorderRadius.circular(15),
 
-                      border: Border.all(
-                        color: isRead
-                            ? Colors.grey.shade200
-                            : Colors.blue,
-                      ),
-                    ),
 
-                    child: Row(
-                      children: [
 
-                        CircleAvatar(
-                          backgroundColor:
-                          isRead ? Colors.grey : Colors.blue,
-                          child: const Icon(
-                            Icons.notifications,
-                            color: Colors.white,
-                          ),
-                        ),
+  # The following adds the Cupertino Icons font to your application.
+  # Use with the CupertinoIcons class for iOS style icons.
 
-                        const SizedBox(width: 12),
+flutter_svg: ^2.0.7
 
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: isRead ? Colors.black : Colors.blue,
-                                ),
-                              ),
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
 
-                              const SizedBox(height: 5),
+  # The "flutter_lints" package below contains a set of recommended lints to
+  # encourage good coding practices. The lint set provided by the package is
+  # activated in the `analysis_options.yaml` file located at the root of your
+  # package. See that file for information about deactivating specific lint
+  # rules and activating additional ones.
+  flutter_lints: ^6.0.0
+flutter_launcher_icons: ^0.13.1
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
 
-                              Text(
-                                body,
-                                softWrap: true,
-                                maxLines: null,
-                                overflow: TextOverflow.visible,
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                            ],
-                          ),
-                        ),
+# The following section is specific to Flutter packages.
+flutter:
 
-                        // 🔴 زر حذف الإشعار
-                        IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () async {
+  # The following line ensures that the Material Icons font is
+  # included with your application, so that you can use the icons in
+  # the material Icons class.
+  uses-material-design: true
+  assets:
+    - assets/images/
 
-                            final confirm = await showDialog(
-                              context: context,
-                              builder: (context) => AlertDialog(
-                                title: const Text("Delete notification"),
-                                content: const Text(
-                                    "Are you sure you want to delete this notification?"),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, false),
-                                    child: const Text("Cancel"),
-                                  ),
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, true),
-                                    child: const Text("Delete"),
-                                  ),
-                                ],
-                              ),
-                            );
 
-                            if (confirm == true) {
-                              await doc.reference.delete();
+  # To add assets to your application, add an assets section, like this:
+  # assets:
+  #   - images/a_dot_burr.jpeg
+  #   - images/a_dot_ham.jpeg
 
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text("Notification deleted"),
-                                ),
-                              );
-                            }
-                          },
-                        ),
+  # An image asset can refer to one or more resolution-specific "variants", see
+  # https://flutter.dev/to/resolution-aware-images
 
-                        if (!isRead)
-                          const Icon(
-                            Icons.circle,
-                            color: Colors.blue,
-                            size: 10,
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-}
+  # For details regarding adding assets from package dependencies, see
+  # https://flutter.dev/to/asset-from-package
+
+  # To add custom fonts to your application, add a fonts section here,
+  # in this "flutter" section. Each entry in this list should have a
+  # "family" key with the font family name, and a "fonts" key with a
+  # list giving the asset and other descriptors for the font. For
+  # example:
+  # fonts:
+  #   - family: Schyler
+  #     fonts:
+  #       - asset: fonts/Schyler-Regular.ttf
+  #       - asset: fonts/Schyler-Italic.ttf
+  #         style: italic
+  #   - family: Trajan Pro
+  #     fonts:
+  #       - asset: fonts/TrajanPro.ttf
+  #       - asset: fonts/TrajanPro_Bold.ttf
+  #         weight: 700
+  #
+  # For details regarding fonts from package dependencies,
+  # see https://flutter.dev/to/font-from-package
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/icon.png"
+  adaptive_icon_background: "#ffffff"
+  adaptive_icon_foreground: "assets/images/icon.png"

@@ -4,10 +4,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'payment_screen.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'notifications_screen.dart';
-
+import 'package:cloud_functions/cloud_functions.dart';
 
 class SettingsScreen extends StatefulWidget {
 
@@ -42,9 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
 
   Future<void> _loadCoins() async {
-
     final user = FirebaseAuth.instance.currentUser;
-
     if (user == null) return;
 
     final doc = await FirebaseFirestore.instance
@@ -52,13 +49,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .doc(user.uid)
         .get();
 
-    if (doc.exists) {
+    if (!mounted) return;
 
-      if (!mounted) return;
+    if (doc.exists && doc.data() != null) {
+      final data = doc.data() as Map<String, dynamic>;
+
       setState(() {
-        totalCoins = doc.data()?['totalCoins'] ?? 0;
+        totalCoins = data['totalCoins'] ?? 0;
       });
-
+    } else {
+      setState(() {
+        totalCoins = 0;
+      });
     }
   }
 
@@ -93,7 +95,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .get();
 
     if (doc.exists) {
-
+      if (!mounted) return;
       setState(() {
         _usedReferral = doc.data()?['usedReferral'] == true;
       });
@@ -102,133 +104,97 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _useFriendCode() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final code = _friendCodeController.text.trim();
+    final code = _friendCodeController.text.trim().toUpperCase();
 
-    if (user == null || code.isEmpty) return;
+    if (code.isEmpty) return;
 
-    if (code.length < 4) {
-      if (!mounted) return;
+    try {
+      final callable =
+      FirebaseFunctions.instanceFor(
+        region: 'us-central1',
+      ).httpsCallable('applyReferralCode');
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a valid referral code')),
-      );
-      return;
-    }
-
-    if (code == referralCode) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('You cannot use your own code')),
-      );
-      return;
-    }
-
-    if (_usedReferral) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Referral already used')),
-      );
-      return;
-    }
-
-    final query = await FirebaseFirestore.instance
-        .collection('users')
-        .where('referralCode', isEqualTo: code)
-        .limit(2)
-        .get();
-
-    if (query.docs.isEmpty) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invalid referral code')),
-      );
-      return;
-    }
-
-    if (query.docs.length > 1) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Error: duplicate referral codes')),
-      );
-      return;
-    }
-
-    final friendDoc = query.docs.first;
-
-    if (friendDoc.id == user.uid) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('You cannot use your own code')),
-      );
-      return;
-    }
-
-
-    await FirebaseFirestore.instance.runTransaction((transaction) async {
-
-      final userRef =
-      FirebaseFirestore.instance.collection('users').doc(user.uid);
-
-      final friendRef = friendDoc.reference;
-
-      transaction.update(userRef, {
-        'totalCoins': FieldValue.increment(50),
-        'usedReferral': true,
+      final result = await callable.call({
+        "code": code,
       });
 
-      transaction.update(friendRef, {
-        'totalCoins': FieldValue.increment(50),
+      debugPrint("SUCCESS: ${result.data}");
+
+      if (!mounted) return;
+
+      await _loadCoins();
+
+      setState(() {
+        _usedReferral = true;
       });
 
-    });
+      _friendCodeController.clear();
 
-    if (!mounted) return;
-    await _loadCoins();
+      if (!mounted) return;
 
-    setState(() {
-      _usedReferral = true;
-    });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('🎉 You got 50 coins')),
+      );
 
-    _friendCodeController.clear();
+    } on FirebaseFunctionsException catch (e) {
 
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('🎉 You received 50 bonus coins (in-app rewards only)')),
-    );
+      debugPrint("ERROR CODE: ${e.code}");
+      debugPrint("ERROR MESSAGE: ${e.message}");
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.message ?? "Unknown error"),
+        ),
+      );
+
+    } catch (e) {
+
+      debugPrint("ERROR: $e");
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString()),
+        ),
+      );
+    }
   }
-
-
   Future<void> _deleteAccount() async {
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) return;
 
     try {
-      final googleSignIn = GoogleSignIn();
-      final googleUser = await googleSignIn.signIn();
+      // تحديد طريقة تسجيل الدخول
+      final providerData = user.providerData.first.providerId;
 
-      if (googleUser == null) return;
+      AuthCredential credential;
 
-      final googleAuth = await googleUser.authentication;
+      if (providerData == 'google.com') {
+        final googleSignIn = GoogleSignIn();
 
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
+        final googleUser = await googleSignIn.signIn();
+        if (googleUser == null) return;
 
+        final googleAuth = await googleUser.authentication;
+
+        credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+      } else {
+        throw Exception("Unsupported sign-in method: $providerData");
+      }
+
+      // إعادة التحقق (مهم جدًا قبل الحذف)
       await user.reauthenticateWithCredential(credential);
 
+      // حذف بيانات Firestore أولاً
       await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .delete();
 
+      // ثم حذف الحساب
       await user.delete();
 
       if (!mounted) return;
@@ -246,6 +212,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     }
   }
+
 
   Future<void> shareReferral() async {
     Share.share(
@@ -267,9 +234,6 @@ Welcome to GoEarn1. Your privacy is important to us. This Privacy Policy explain
 By using the application, you agree to the collection and use of information in accordance with this policy.
 
 1. Information We Collect
-
-We may collect the following types of information:
-
 1.1 Account Information
 
 When you sign in using Google or email, we may collect:
@@ -317,8 +281,7 @@ Ad interaction data
 
 This helps display relevant ads and improve ad performance.
 
-For more information, visit:
-
+For more information:
 https://policies.google.com/privacy
 
 1.5 Notifications Data
@@ -359,7 +322,7 @@ Firebase Analytics
 Firebase Crashlytics
 Google Play Services
 
-These services have their own privacy policies.
+These services operate under their own privacy policies.
 
 4. Rewards & Virtual Currency
 Coins earned in the app are virtual rewards
@@ -370,9 +333,6 @@ Withdrawal requests may be approved, delayed, or rejected
 The app does not guarantee earnings or income.
 
 5. Referral Program
-
-The app may include a referral system:
-
 Users can invite friends
 Users may receive promotional coins
 Abuse of referral system may result in account suspension
@@ -395,7 +355,8 @@ Delete your account
 Stop using the app
 Disable notifications
 
-Users can delete their account directly from the app settings.
+Users can delete their account directly from inside the app 
+or request deletion via email at: sbhy6797@gmail.com
 
 8. Children's Privacy
 
@@ -407,14 +368,24 @@ If we discover such data, it will be deleted immediately.
 
 9. Data Retention
 
-We retain user data only as long as necessary:
+We retain user data only for as long as necessary to provide our services.
 
-Account data until account deletion
-Analytics data for performance improvement
+- Account data is stored until the user deletes their account
+- Some data may be retained for a limited period for legal, security, and fraud prevention purposes
+- After account deletion, user data is permanently deleted within 30 days
 
-Users may request deletion at any time.
+10. Data Deletion
 
-10. Ads Policy
+Users have the right to delete their data at any time.
+
+You can request deletion by:
+
+- Using the "Delete Account" option inside the app
+- Or contacting us via email at: sbhy6797@gmail.com
+
+All user data will be permanently deleted within 30 days of the request.
+
+11. Ads Policy
 
 The app displays ads provided by Google AdMob.
 
@@ -426,7 +397,7 @@ Do not display misleading ads
 
 Ads follow Google AdMob policies.
 
-11. Changes to Privacy Policy
+12. Changes to Privacy Policy
 
 We may update this Privacy Policy from time to time.
 
@@ -434,14 +405,14 @@ Changes will be posted inside the app.
 
 Continued use means acceptance of updates.
 
-12. Contact Us
+13. Contact Us
 
-If you have questions, contact us:
+If you have any questions, contact us:
 
 Email:
 sbhy6797@gmail.com
 
-13. Consent
+14. Consent
 
 By using GoEarn1, you agree to:
 
@@ -462,7 +433,7 @@ Privacy policy terms
   }
 
   void _openPrivacyPolicyLink() async {
-    final url = Uri.parse('https://sites.google.com/view/goearn1-privacy-/home');
+    final url = Uri.parse("https://goearn1-app.blogspot.com/p/privacy-policy.html");
 
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
@@ -693,7 +664,7 @@ Agree to these Terms
 
   // ✅ Terms Link
   void _openTermsLink() async {
-    final url = Uri.parse('https://sites.google.com/view/goearn1-/home');
+    final url = Uri.parse('https://goearn1-app.blogspot.com/p/terms-conditions.html');
 
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
@@ -969,46 +940,6 @@ Agree to these Terms
                     const SizedBox(height: 40),
                   ],
                 ),
-              ),
-            ),
-
-            Padding(
-              padding: const EdgeInsets.only(bottom: 15),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-
-                  GestureDetector(
-                    onTap: () {
-
-                      Navigator.pop(context);
-                    },
-                    child: Image.asset(
-                        'assets/images/image_7.png',
-                        width: 40),
-                  ),
-
-                  GestureDetector(
-                    onTap: () {
-
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const PaymentScreen(),
-                        ),
-                      );
-
-                    },
-                    child: Image.asset(
-                        'assets/images/image_8.png',
-                        width: 40),
-                  ),
-
-                  Image.asset(
-                      'assets/images/image_9.png',
-                      width: 40),
-
-                ],
               ),
             ),
 
