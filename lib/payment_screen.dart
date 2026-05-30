@@ -23,15 +23,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
   BannerAd? _bannerAd;
 
   final List<Map<String, dynamic>> payments = [
-    {"type": "paypal", "amount": 6, "coins": 90, "image": "assets/images/paypal.png", "currency": "\$"},
-    {"type": "paypal", "amount": 4, "coins": 70, "image": "assets/images/paypal.png", "currency": "\$"},
-    {"type": "paypal", "amount": 2, "coins": 50, "image": "assets/images/paypal.png", "currency": "\$"},
-    {"type": "bitcoin", "amount": 6, "coins": 90, "image": "assets/images/faucetpay.png", "currency": "\$"},
-    {"type": "bitcoin", "amount": 4, "coins": 70, "image": "assets/images/faucetpay.png", "currency": "\$"},
-    {"type": "bitcoin", "amount": 2, "coins": 50, "image": "assets/images/faucetpay.png", "currency": "\$"},
-    {"type": "vodafone", "amount": 200, "coins": 90, "image": "assets/images/vodafone.png", "currency": "ج"},
-    {"type": "vodafone", "amount": 150, "coins": 70, "image": "assets/images/vodafone.png", "currency": "ج"},
-    {"type": "vodafone", "amount": 100, "coins": 50, "image": "assets/images/vodafone.png", "currency": "ج"},
+    {"type": "paypal", "amount": 6, "coins": 90000, "image": "assets/images/paypal.png", "currency": "\$"},
+    {"type": "paypal", "amount": 4, "coins": 70000, "image": "assets/images/paypal.png", "currency": "\$"},
+    {"type": "paypal", "amount": 2, "coins": 50000, "image": "assets/images/paypal.png", "currency": "\$"},
+    {"type": "bitcoin", "amount": 6, "coins": 90000, "image": "assets/images/faucetpay.png", "currency": "\$"},
+    {"type": "bitcoin", "amount": 4, "coins": 70000, "image": "assets/images/faucetpay.png", "currency": "\$"},
+    {"type": "bitcoin", "amount": 2, "coins": 50000, "image": "assets/images/faucetpay.png", "currency": "\$"},
+    {"type": "vodafone", "amount": 200, "coins": 90000, "image": "assets/images/vodafone.png", "currency": "ج"},
+    {"type": "vodafone", "amount": 150, "coins": 70000, "image": "assets/images/vodafone.png", "currency": "ج"},
+    {"type": "vodafone", "amount": 100, "coins": 50000, "image": "assets/images/vodafone.png", "currency": "ج"},
   ];
 
   @override

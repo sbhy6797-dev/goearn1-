@@ -85,40 +85,41 @@ class AuthGate extends StatelessWidget {
         if (user == null) {
           return const LoginPage();
         }
-
         return StreamBuilder<DocumentSnapshot>(
           stream: FirebaseFirestore.instance
               .collection('users')
               .doc(user.uid)
               .snapshots(),
           builder: (context, snap) {
-            if (snap.connectionState ==
-                ConnectionState.waiting) {
+
+            if (snap.connectionState == ConnectionState.waiting) {
               return const Scaffold(
-                body: Center(
-                  child:
-                  CircularProgressIndicator(),
-                ),
+                body: Center(child: CircularProgressIndicator()),
               );
             }
 
-            if (!snap.hasData ||
-                !snap.data!.exists) {
-              return const LoginPage();
+            if (!snap.hasData || !snap.data!.exists) {
+              return const Scaffold(
+                body: Center(child: Text("Loading user...")),
+              );
             }
 
-            final data =
-            snap.data!.data()
-            as Map<String, dynamic>;
+            final rawData = snap.data!.data();
 
-            final totalCoins =
-                data['totalCoins'] ?? 0;
+            if (rawData == null) {
+              return const Scaffold(
+                body: Center(child: Text("Initializing user...")),
+              );
+            }
 
-            return MainScreen(
-              totalCoins: totalCoins,
-            );
+            final data = rawData as Map<String, dynamic>;
+
+            final totalCoins = data['totalCoins'] ?? 0;
+
+            return MainScreen(totalCoins: totalCoins);
           },
         );
+
       },
     );
   }

@@ -24,8 +24,8 @@ class _LuckySpinScreenState extends State<LuckySpinScreen>
   double _currentAngle = 0.0;
   int _spinCounter = 0;
   int _selectedIndex = 0;
-  final int totalSections = 8;
-  final double sectionAngle = 2 * pi / 8;
+  final int totalSections = 6;
+  final double sectionAngle = 2 * pi / 6;
 
   bool _isSpinning = false;
 
@@ -125,31 +125,34 @@ class _LuckySpinScreenState extends State<LuckySpinScreen>
 
     if (_isSpinning) return;
 
-    _spinCounter++;
-
-    if (_spinCounter % 3 == 1) {
-      _selectedIndex = Random().nextInt(3);
-    }
-    else if (_spinCounter % 3 == 2) {
-      _selectedIndex = 3 + Random().nextInt(3);
-    }
-    else {
-      _selectedIndex = 6 + Random().nextInt(2);
-    }
-
     _isSpinning = true;
 
+    // ترتيب ثابت
+    List<int> sequence = [0, 2, 4];
+
+    _selectedIndex = sequence[_spinCounter % 3];
+
+    _spinCounter++;
+
+    // عدد لفات
+    double spins = 6 * 2 * pi;
+
+    // زاوية الوقوف الدقيقة
     double targetAngle =
-        _currentAngle +
-            (6 * 2 * pi) +
-            (_selectedIndex * sectionAngle) +
-            (sectionAngle / 2);
+        spins -
+            (_selectedIndex * sectionAngle);
 
     _controller.animateTo(
       targetAngle / (10 * 2 * pi),
       duration: const Duration(seconds: 5),
       curve: Curves.decelerate,
-    );
+    ).whenComplete(() {
+
+      _currentAngle = targetAngle;
+
+      _isSpinning = false;
+
+    });
 
   }
 
@@ -157,66 +160,46 @@ class _LuckySpinScreenState extends State<LuckySpinScreen>
 
   void _calculateReward() {
 
-    int index = _selectedIndex;
+    int speed;
+    Duration duration;
 
-    int speed = 3;
-    Duration duration = const Duration(minutes: 10);
-
-    if (index <= 2) {
+    if (_selectedIndex == 0) {
 
       speed = 3;
       duration = const Duration(minutes: 10);
-      rewardText = "🚀 Speed Boost x3";
 
-    }
-
-    else if (index <= 5) {
+    } else if (_selectedIndex == 2) {
 
       speed = 5;
       duration = const Duration(minutes: 15);
-      rewardText = "🚀 Speed Boost x5";
 
-    }
-
-    else {
+    } else {
 
       speed = 7;
       duration = const Duration(minutes: 20);
-      rewardText = "🚀 Speed Boost x7";
 
     }
+
+    rewardText = "🚀 Speed Boost x$speed";
 
     setState(() {});
 
     Navigator.push(
-
       context,
-
       MaterialPageRoute(
-
         builder: (context) => CongratulationScreen(
-
           reward: 0,
-
           speed: speed,
-
           duration: duration,
-
           onClaim: (_) {},
-
           onSpeedBoost: (speed, duration) {
-
             widget.onRewardCollected(speed);
-
           },
-
         ),
-
       ),
-
     );
-
   }
+
 
   // ================= UI =================
 

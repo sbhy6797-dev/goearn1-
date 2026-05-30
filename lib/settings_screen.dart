@@ -54,10 +54,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (doc.exists && doc.data() != null) {
       final data = doc.data() as Map<String, dynamic>;
 
+      if (!mounted) return;
+
       setState(() {
         totalCoins = data['totalCoins'] ?? 0;
       });
+
     } else {
+
+      if (!mounted) return;
+
       setState(() {
         totalCoins = 0;
       });
@@ -808,7 +814,7 @@ Agree to these Terms
                     const SizedBox(height: 15),
 
                     const Text(
-                      'Stay active and earn reward coins ',
+                      'Stay active and earn reward 100 coins ',
                       style: TextStyle(fontSize: 12),
                     ),
 
@@ -858,8 +864,10 @@ Agree to these Terms
                               : 'Enter friend code',
 
                           suffixIcon: IconButton(
-                            icon: const Icon(Icons.card_giftcard,
-                                color: Colors.green),
+                            icon: const Icon(
+                              Icons.touch_app,
+                              color: Colors.green,
+                            ),
                             onPressed:
                             _usedReferral ? null : _useFriendCode,
                           ),

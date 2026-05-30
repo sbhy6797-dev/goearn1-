@@ -106,6 +106,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     _loadLocalData();
 
     _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+
       if (!mounted) return;
 
       setState(() {
@@ -141,6 +142,8 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   @override
   void didPopNext() {
     _restoreTimerFromFirebase();
+
+
     setState(() {});
   }
   @override
@@ -243,6 +246,8 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
         }
 
         // ================= STATE UPDATE =================
+
+        if (!mounted) return;
         setState(() {
           steps = data['steps'] ?? 0;
           coins = data['coins'] ?? 0;
@@ -262,6 +267,9 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
               endTime.difference(DateTime.now()).inSeconds;
 
           if (remaining > 0) {
+
+            if (!mounted) return;
+
             setState(() {
               boostEndTime = endTime;
               remainingSeconds = remaining;
@@ -269,6 +277,9 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                   (data['boostMultiplier'] ?? 3).toDouble();
             });
           } else {
+
+            if (!mounted) return;
+
             setState(() {
               boostEndTime = null;
               remainingSeconds = 0;
@@ -305,12 +316,13 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
           isRestore: true,
         );
 
-
+        if (!mounted) return;
         setState(() {
           remainingSeconds = remaining;
         });
 
       } else {
+        if (!mounted) return;
         setState(() {
           boostEndTime = null;
           boostMultiplier = 1.0;
@@ -343,6 +355,8 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
   void onStepCount(StepCount event) {
 
+    if (!mounted || !_isListening) return;
+
     if (lastSensorSteps == 0) {
       lastSensorSteps = event.steps;
     }
@@ -355,9 +369,12 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     }
 
     if (diff > 0) {
+
       int newSteps = (steps + diff).clamp(0, maxSteps);
       int boostedSteps = (newSteps * boostMultiplier).floor();
       int newCoins = (boostedSteps ~/ stepPerCoin) * 10;
+
+      if (!mounted) return;
 
       setState(() {
         steps = newSteps;
@@ -367,7 +384,11 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       lastSensorSteps = event.steps;
 
       _debounce?.cancel();
+
       _debounce = Timer(const Duration(seconds: 5), () async {
+
+        if (!mounted) return;
+
         await _saveLocalData();
         await _updateFirebase();
       });
@@ -450,6 +471,9 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   Future<void> _loadLocalData() async {
     final prefs = await SharedPreferences.getInstance();
     lastSensorSteps = prefs.getInt('lastSensorSteps') ?? 0;
+
+    if (!mounted) return;
+
     setState(() {
       steps = prefs.getInt('steps') ?? 0;
       coins = prefs.getInt('coins') ?? 0;
@@ -485,7 +509,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   @override
   void dispose() {
     _uiTimer?.cancel();
-    routeObserver.unsubscribe(this);
+    _debounce?.cancel();
 
     try {
       _stepSubscription?.cancel();
@@ -494,7 +518,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     _stepSubscription = null;
     _isListening = false;
 
-    _debounce?.cancel();
+    routeObserver.unsubscribe(this);
 
     super.dispose();
   }
@@ -519,6 +543,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
             int newSpeed = speedLevels[currentIndex];
 
+            if (!mounted) return;
             setState(() {
               boostMultiplier = newSpeed.toDouble();
               lastSpinText = "🚀 Speed Boost x$newSpeed Activated";
@@ -884,6 +909,7 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
           _isAdLoading = false;
 
           if (mounted) {
+
             setState(() {});
           }
         },
@@ -943,6 +969,8 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
 
     _rewardedAd!.show(
       onUserEarnedReward: (ad, reward) {
+
+        if (!mounted) return;
         setState(() {
           _adWatched = true;
         });
