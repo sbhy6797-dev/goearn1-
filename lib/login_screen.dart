@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'home_screen.dart';
-
+import 'dart:async';
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -36,7 +36,9 @@ class _LoginPageState extends State<LoginPage> {
       /// 🔐 Firebase Auth with timeout protection
       final userCredential = await FirebaseAuth.instance
           .signInAnonymously()
-          .timeout(const Duration(seconds: 10));
+
+          .timeout(const Duration(seconds: 15));
+
 
       final user = userCredential.user;
 
@@ -65,18 +67,34 @@ class _LoginPageState extends State<LoginPage> {
         ),
       );
 
-    } on FirebaseAuthException catch (e, stack) {
-      await FirebaseCrashlytics.instance.recordError(
-        e,
-        stack,
-        reason: 'Anonymous Login Failed',
-        fatal: false,
+    } on TimeoutException {
+      if (!mounted) return;
+
+      _showError(
+        "Connection is slow. Please try again.",
       );
+
+    } on FirebaseAuthException catch (e, stack) {
+
+      if (e.code != 'network-request-failed') {
+        await FirebaseCrashlytics.instance.recordError(
+          e,
+          stack,
+          reason: 'Anonymous Login Failed',
+          fatal: false,
+        );
+      }
 
       if (!mounted) return;
 
-      _showError(e.message ?? "Login failed");
+      _showError(
+        e.code == 'network-request-failed'
+            ? 'Check your internet connection'
+            : (e.message ?? 'Login failed'),
+      );
+
     } catch (e, stack) {
+
       await FirebaseCrashlytics.instance.recordError(
         e,
         stack,
@@ -86,7 +104,10 @@ class _LoginPageState extends State<LoginPage> {
 
       if (!mounted) return;
 
-      _showError("Something went wrong. Please try again.");
+      _showError(
+        "Something went wrong. Please try again.",
+      );
+
     } finally {
       if (mounted) {
         setState(() => _loading = false);

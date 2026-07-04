@@ -5,8 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
-
-
+import 'package:rapidoreach/rapidoreach.dart';
+import 'aoyco_page.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -62,20 +62,13 @@ final List<SurveyNetwork> networks = const [
     'https://www.cpagrip.com/show.php?u=2528152&id=OFFER_ID&tracking_id=USER_ID',
   ),
 
-  SurveyNetwork(
-    'TheoremReach',
-    'Surveys',
-    'assets/images/theoremreach.png',
-    'https://theoremreach.com/respondent_entry/direct?placementId=71b42ce0-8e8d-46b3-8732-e03d0918baa9',
-  ),
 
   SurveyNetwork(
-    'MyLead',
+    'RapidoReach',
     'Offers & Surveys',
-    'assets/images/mylead.png',
-    'https://reward-me.eu/4cbc0d18-57af-11f1-b2be-129a1c289511',
+    'assets/images/rapidrach.png',
+    '',
   ),
-
 
 
   SurveyNetwork(
@@ -91,6 +84,39 @@ final List<SurveyNetwork> networks = const [
     'Offers & Surveys',
     'assets/images/pollmatic.png',
     'https://pollmatic.io/offerwall/5nn2tuj7dys60tdmce803natkrnlzz/USER_ID',
+  ),
+
+
+  SurveyNetwork(
+    'MyLead',
+    'Offers & Surveys',
+    'assets/images/mylead.png',
+    'https://reward-me.eu/4cbc0d18-57af-11f1-b2be-129a1c289511',
+  ),
+
+
+
+
+  SurveyNetwork(
+    'TheoremReach',
+    'Surveys',
+    'assets/images/theoremreach.png',
+    'https://theoremreach.com/respondent_entry/direct?placementId=71b42ce0-8e8d-46b3-8732-e03d0918baa9',
+  ),
+
+
+  SurveyNetwork(
+    'offerwall',
+    'Tasks & Surveys',
+    'assets/images/offerwall.png',
+    'https://offerwall.me/offerwall/smovobh1aoydx367c1v9kqleqlyp78/[USER_ID]',
+  ),
+
+  SurveyNetwork(
+    'AoyCo',
+    'PTC + Offerwall',
+    'assets/images/aoyco.png',
+    'https://aoyco.in/offerwall/QO85oCW4UBP5fcdiRuVjVElVK7Uulh6p/[USER_ID]',
   ),
 
 ];
@@ -217,14 +243,47 @@ class SurveyHomePage extends StatefulWidget {
 
 class _SurveyHomePageState extends State<SurveyHomePage> {
 
+  bool _rrReady = false;
+
+
   BannerAd? _topBannerAd;
   BannerAd? _bottomBannerAd;
 
   @override
   void initState() {
     super.initState();
+
     _loadTopBannerAd();
     _loadBottomBannerAd();
+
+    _initRapidoReach();
+  }
+
+
+
+  Future<void> _initRapidoReach() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) return;
+
+    try {
+      await RapidoReach.instance.init(
+        apiToken: "bcea9940604245349fa6fe4c8df9b1bc",
+        userId: user.uid,
+      );
+
+      setState(() {
+        _rrReady = true;
+      });
+
+      debugPrint("RapidoReach Ready");
+    } catch (e) {
+      debugPrint("RapidoReach Init Error: $e");
+
+      setState(() {
+        _rrReady = false;
+      });
+    }
   }
 
   void _loadTopBannerAd() {
@@ -372,7 +431,7 @@ class _SurveyHomePageState extends State<SurveyHomePage> {
 
                         /* ===== البانر في النص ===== */
 
-                        if (_topBannerAd != null)
+                        if (_bottomBannerAd != null)
                           Container(
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(18),
@@ -441,6 +500,38 @@ class _SurveyHomePageState extends State<SurveyHomePage> {
                             ),
                           ],
                         ),
+
+                        const SizedBox(height: 20),
+
+
+                        Row(
+                          children: [
+
+                            Expanded(
+                              child: SurveyCard(
+                                network: networks[6],
+                              ),
+                            ),
+
+                            const SizedBox(width: 16),
+
+                            Expanded(
+                              child: SurveyCard(
+                                network: networks[7],
+                              ),
+                            ),
+
+                            const SizedBox(width: 16),
+
+                            Expanded(
+                              child: SurveyCard(
+                                network: networks[8],
+                              ),
+                            ),
+
+                          ],
+                        )
+
                       ],
                     ),
                   ),
@@ -572,24 +663,93 @@ class SurveyCard extends StatelessWidget {
               '&exchange_rate=100';
         }
 
-        // ================= MyLead =================
-        else if (network.name == 'MyLead') {
+// =================    Offerwall   =================
 
+        else if (network.name == 'offerwall') {
           final user = FirebaseAuth.instance.currentUser;
           if (user == null) return;
 
           final userId = user.uid;
 
+          final url =
+              'https://offerwall.me/offerwall/smovobh1aoydx367c1v9kqleqlyp78/$userId';
+
+          await launchUrl(
+            Uri.parse(url),
+            mode: LaunchMode.externalApplication,
+          );
+
+          return;
+        }
+
+
+// =================    AoyCo   =================
+
+        else if (network.name == 'AoyCo') {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const AoyCoPage(),
+            ),
+          );
+          return;
+        }
+
+        // =================  RapidoReach =================
+
+        else if (network.name == 'RapidoReach') {
+          try {
+            await RapidoReach.instance.showRewardCenter();
+          } catch (e) {
+            debugPrint("RapidoReach error: $e");
+
+            if (!context.mounted) return;
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Try again later")),
+            );
+          }
+
+          return;
+        }
+        // ================= MyLead =================
+        else if (network.name == 'MyLead') {
+
+          final userId = FirebaseAuth.instance.currentUser!.uid;
+
           url =
           'https://reward-me.eu/4cbc0d18-57af-11f1-b2be-129a1c289511'
               '?player_id=$userId';
 
-          final uri = Uri.parse(url);
+          try {
+            final uri = Uri.parse(url);
 
-          await launchUrl(
-            uri,
-            mode: LaunchMode.externalApplication,
-          );
+            final launched = await launchUrl(
+              uri,
+              mode: LaunchMode.externalApplication,
+            );
+
+            if (!launched) {
+
+              if (!context.mounted) return;
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Unable to open link'),
+                ),
+              );
+            }
+          } catch (e) {
+            debugPrint("Launch error: $e");
+
+            if (!context.mounted) return;
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Unable to open link'),
+              ),
+            );
+          }
 
           return;
         }
@@ -604,12 +764,16 @@ class SurveyCard extends StatelessWidget {
               '&uid=${user.uid}'
               '&subid=flutter_app';
 
-          final uri = Uri.parse(url);
+          try {
+            final uri = Uri.parse(url);
 
-          await launchUrl(
-            uri,
-            mode: LaunchMode.externalApplication,
-          );
+            await launchUrl(
+              uri,
+              mode: LaunchMode.externalApplication,
+            );
+          } catch (e) {
+            debugPrint("Launch error: $e");
+          }
 
           return;
         }

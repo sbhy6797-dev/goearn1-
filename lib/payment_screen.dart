@@ -29,8 +29,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
     {"type": "bitcoin", "amount": 6, "coins": 90000, "image": "assets/images/faucetpay.png", "currency": "\$"},
     {"type": "bitcoin", "amount": 4, "coins": 70000, "image": "assets/images/faucetpay.png", "currency": "\$"},
     {"type": "bitcoin", "amount": 2, "coins": 50000, "image": "assets/images/faucetpay.png", "currency": "\$"},
-    {"type": "vodafone", "amount": 200, "coins": 90000, "image": "assets/images/vodafone.png", "currency": "ج"},
-    {"type": "vodafone", "amount": 150, "coins": 70000, "image": "assets/images/vodafone.png", "currency": "ج"},
+    {"type": "vodafone", "amount": 300, "coins": 90000, "image": "assets/images/vodafone.png", "currency": "ج"},
+    {"type": "vodafone", "amount": 200, "coins": 70000, "image": "assets/images/vodafone.png", "currency": "ج"},
     {"type": "vodafone", "amount": 100, "coins": 50000, "image": "assets/images/vodafone.png", "currency": "ج"},
   ];
 
@@ -165,7 +165,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Image.asset(item["image"], width: 45),
+                        Image.asset(item["image"], width: 50),
                         const SizedBox(height: 8),
                         Text("${item["amount"]} ${item["currency"]}",
                             style: const TextStyle(fontWeight: FontWeight.bold)),

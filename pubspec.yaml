@@ -2,7 +2,7 @@ name: goearn1
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.0.0+12
+version: 1.0.0+14
 
 environment:
   sdk: ^3.10.4
@@ -11,7 +11,13 @@ dependencies:
   flutter:
     sdk: flutter
 
+  flutter_localizations:
+    sdk: flutter
+
+  intl: any
+
   cupertino_icons: ^1.0.8
+
 
   # Firebase (متوافقة مع بعض)
   firebase_core: ^3.15.0
@@ -23,6 +29,8 @@ dependencies:
   firebase_storage: ^12.0.0
   firebase_database: ^11.0.0
   firebase_app_check: ^0.3.0
+  in_app_update: ^4.2.3
+  rapidoreach: ^1.1.0
 
   # Google Sign-In (مهم جدًا)
   google_sign_in: ^6.3.0
@@ -43,9 +51,9 @@ dependencies:
   flutter_svg: ^2.0.7
   webview_flutter: ^4.7.0
 
-  # Notifications (المهم جدًا)
-  flutter_local_notifications: ^17.2.4
-  timezone: ^0.9.4
+
+
+
 
   device_info_plus: ^10.0.0
   cloud_functions: ^5.0.0
@@ -61,6 +69,8 @@ dev_dependencies:
 
 
 flutter:
+  generate: true
+
   uses-material-design: true
 
   assets:

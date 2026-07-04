@@ -114,9 +114,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (code.isEmpty) return;
 
+    final messenger = ScaffoldMessenger.of(context);
+
     try {
-      final callable =
-      FirebaseFunctions.instanceFor(
+      final callable = FirebaseFunctions.instanceFor(
         region: 'us-central1',
       ).httpsCallable('applyReferralCode');
 
@@ -130,6 +131,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       await _loadCoins();
 
+      if (!mounted) return;
+
       setState(() {
         _usedReferral = true;
       });
@@ -138,32 +141,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(content: Text('🎉 You got 50 coins')),
       );
 
     } on FirebaseFunctionsException catch (e) {
-
       debugPrint("ERROR CODE: ${e.code}");
       debugPrint("ERROR MESSAGE: ${e.message}");
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      if (!mounted) return;
+
+      messenger.showSnackBar(
         SnackBar(
           content: Text(e.message ?? "Unknown error"),
         ),
       );
 
     } catch (e) {
-
       debugPrint("ERROR: $e");
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString()),
-        ),
+      if (!mounted) return;
+
+      messenger.showSnackBar(
+        SnackBar(content: Text(e.toString())),
       );
     }
   }
+
   Future<void> _deleteAccount() async {
     final user = FirebaseAuth.instance.currentUser;
 

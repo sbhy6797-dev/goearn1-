@@ -45,6 +45,10 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   int initialSteps = 0;
   bool isFirstUpdate = true;
 
+
+  bool isStepSupported = true;
+
+
   StreamSubscription<StepCount>? _stepSubscription;
   late Stream<StepCount> _stepCountStream;
 
@@ -103,10 +107,14 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   void initState() {
     super.initState();
 
+    // ✅ ADD THIS (UMP SAFE INIT)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      initConsentFormSafe();
+    });
+
     _loadLocalData();
 
     _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-
       if (!mounted) return;
 
       setState(() {
@@ -151,25 +159,33 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
 
   }
+
+
   @override
   void didPop() {
     routeObserver.unsubscribe(this);
   }
 
+
   Future<void> initApp() async {
-    var status = await Permission.activityRecognition.status;
+
+    final status = await Permission.activityRecognition.status;
+
     if (!status.isGranted) {
-      status = await Permission.activityRecognition.request();
-      if (!status.isGranted) {
-        openAppSettings();
-        return;
-      }
+      return;
     }
 
     await loadData();
-    initPedometer();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    Future.delayed(const Duration(milliseconds: 500), () {
+      initPedometer();
+    });
+
+    Future.delayed(const Duration(seconds: 1), () {
+      _loadInterstitial();
+    });
+
+    Future.delayed(const Duration(seconds: 2), () {
       if (!mounted) return;
       _showCongratulationScreen();
     });
@@ -349,7 +365,12 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       );
     } catch (e) {
       _isListening = false;
-      debugPrint("Pedometer init error: $e");
+
+      isStepSupported = false;
+
+      debugPrint("Pedometer NOT supported: $e");
+
+      _handleNoStepSupport();
     }
   }
 
@@ -397,6 +418,14 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
   void onStepError(Object error) {
     debugPrint("Step Error: $error");
+
+    if (error.toString().contains("StepCount not available")) {
+      isStepSupported = false;
+
+      _handleNoStepSupport();
+
+      return;
+    }
 
     _stepSubscription?.cancel();
     _stepSubscription = null;
@@ -523,6 +552,28 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     super.dispose();
   }
 
+  void _handleNoStepSupport() {
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Device not supported"),
+        content: const Text(
+          "Your device does not support step counting.\n\nYou can still earn coins using ads 🎁",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("OK"),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+
   void showLuckySpin() {
     if (!mounted) return;
     Navigator.push(
@@ -617,7 +668,18 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             const SizedBox(height: 20),
             _circleSteps(),
             const SizedBox(height: 10),
+
+            if (!isStepSupported)
+              const Padding(
+                padding: EdgeInsets.all(10),
+                child: Text(
+                  "⚠️ Step tracking not supported on this device",
+                  style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                ),
+              ),
+
             if (getRemainingSeconds() > 0)
+
               Column(
                 children: [
                   Text(
@@ -892,8 +954,11 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
   @override
   void initState() {
     super.initState();
-    _loadRewardedAd();
-    _loadBannerAd();
+
+    Future.delayed(const Duration(seconds: 2), () {
+      _loadRewardedAd();
+      _loadBannerAd();
+    });
   }
 
   void _loadRewardedAd() {

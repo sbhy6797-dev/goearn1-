@@ -1,0 +1,45 @@
+{
+  "stepTrackingPermissionTitle": "إذن تتبع الخطوات",
+  "stepTrackingPermissionBody": "نستخدم إذن التعرف على النشاط لاحتساب خطواتك وتتبع حركتك اليومية.",
+  "noThanks": "لا شكراً",
+  "allow": "موافقة",
+
+  "enableNotificationsTitle": "تفعيل الإشعارات",
+  "enableNotificationsBody": "قد نرسل تذكيرات بسيطة لمساعدتك على البقاء نشيطاً.",
+
+  "dataUsageTitle": "استخدام البيانات",
+  "dataUsageBody": "نجمع عدد خطواتك ومعلومات الجهاز واستخدام التطبيق لتحسين الأداء. قد تتم مشاركة البيانات مع خدمات مثل Google Analytics و Firebase بدون بيانات شخصية.",
+
+  "yes": "نعم",
+  "no": "لا",
+
+  "stayActive": "ابق نشيطاً",
+  "takeWalk": "خذ مشي قصير اليوم",
+  "greatJob": "عمل رائع",
+  "doingGreat": "أداءك ممتاز اليوم",
+
+  "reminder": "تذكير",
+  "stayHealthy": "حافظ على نشاطك وصحتك",
+
+  "noUserLoggedIn": "لا يوجد مستخدم",
+  "stepCounterNotSupported": "عداد الخطوات غير مدعوم",
+  "permissionNotGranted": "لم يتم منح الإذن",
+  "stepError": "خطأ في الخطوات",
+  "pedometerInitError": "خطأ في تشغيل العداد",
+  "loadStepsError": "خطأ في تحميل الخطوات",
+  "fcmError": "خطأ في الإشعارات",
+  "firestoreError": "خطأ في قاعدة البيانات",
+
+  "surveyTitle": "اكمل الاستطلاعات واربح المكافآت ✨",
+  "surveySubtitle": "اختر أي شبكة لبدء تحقيق المكافآت",
+
+  "howToEarn": "كيفية الربح",
+  "followSteps": "اتبع الخطوات التالية:",
+  "step1": "1️⃣ افتح العرض",
+  "step2": "2️⃣ أكمل جميع الخطوات المطلوبة",
+  "step3": "3️⃣ حمّل التطبيق أو سجّل إذا طُلب منك",
+  "step4": "4️⃣ بعد إكمال العرض ستُضاف المكافآت تلقائيًا",
+  "warningNoRewardClick": "⚠️ الضغط فقط لا يمنح مكافأة",
+  "cancel": "إلغاء",
+  "startNow": "ابدأ الآن"
+}

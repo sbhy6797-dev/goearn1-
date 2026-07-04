@@ -46,10 +46,20 @@ class WithdrawScreen extends StatefulWidget {
 
 class _WithdrawScreenState extends State<WithdrawScreen> {
 
-  final TextEditingController _controller = TextEditingController();
 
+  String _currencySymbol() {
+    switch (widget.type) {
+      case 'vodafone':
+        return 'ج';
+      case 'paypal':
+      case 'bitcoin':
+        return '\$';
+      default:
+        return '\$';
+    }
+  }
+  final TextEditingController inputController = TextEditingController();
   final TextEditingController walletController = TextEditingController();
-
   double btcPrice = 0;
 
   Timer? _timer;
@@ -147,7 +157,9 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   Future<void> handleWithdraw() async {
     if (isProcessing) return;
 
-    final input = _controller.text.trim();
+    final wallet = walletController.text.trim();
+
+    final input = inputController.text.trim();
 
     final double usd = widget.amount.toDouble();
 
@@ -199,23 +211,6 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       return;
     }
 
-    if (widget.type == 'bitcoin') {
-
-      final wallet = walletController.text.trim();
-
-      if (wallet.isEmpty || wallet.length < 20) {
-
-        if (!mounted) return;
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Enter Bitcoin wallet'),
-          ),
-        );
-
-        return;
-      }
-    }
 
     if (widget.type == 'paypal') {
       if (!input.contains('@') || !input.contains('.')) {
@@ -246,11 +241,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     }
 
     else if (widget.type == 'bitcoin') {
-
-      final wallet = walletController.text.trim();
-
       if (wallet.isEmpty || wallet.length < 20) {
-
         if (!mounted) return;
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -302,7 +293,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           .add({
         'uid': uid,
         'type': widget.type,
-        'wallet': walletController.text.trim(),
+        'wallet': widget.type == 'bitcoin' ? wallet : input,
         'email': email,
         'amount': widget.amount,
         'coins': widget.coins,
@@ -312,13 +303,14 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
         'processed': false,
         'createdAt': FieldValue.serverTimestamp(),
         'fcmToken': fcmToken,
+        
       });
 
       final message = widget.type == 'paypal'
           ? 'طلب سحب PayPal: $input'
           : widget.type == 'vodafone'
           ? 'طلب سحب Vodafone: $input'
-          : 'طلب سحب Bitcoin: ${walletController.text.trim()}';
+          : 'طلب سحب Bitcoin: $input';
 
       await sendNotification(message);
       if (!mounted) return;
@@ -364,8 +356,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   @override
   void dispose() {
     _timer?.cancel();
-    _controller.dispose();
-    walletController.dispose();
+    inputController.dispose();
     _bannerAd?.dispose();
     super.dispose();
   }
@@ -399,7 +390,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
             const SizedBox(height: 10),
 
             Text(
-              '${widget.amount} ${widget.type == 'paypal' ? '\$' : 'ج'}',
+              '${widget.amount} ${_currencySymbol()}',
               style: const TextStyle(
                 fontSize: 36,
                 fontWeight: FontWeight.bold,
@@ -412,7 +403,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
             if (widget.type == 'paypal' ||
                 widget.type == 'vodafone')
               TextField(
-                controller: _controller,
+                controller: inputController,
                 keyboardType: widget.type == 'vodafone'
                     ? TextInputType.phone
                     : TextInputType.text,

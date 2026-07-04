@@ -38,7 +38,8 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       body: screens[currentIndex],
 
-      bottomNavigationBar: Container(
+        bottomNavigationBar: SafeArea(
+          child: Container(
         padding: const EdgeInsets.only(bottom: 15, top: 10),
         color: Colors.white,
         child: Row(
@@ -83,6 +84,7 @@ class _MainScreenState extends State<MainScreen> {
           ],
         ),
       ),
+        ),
     );
   }
 }

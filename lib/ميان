@@ -16,6 +16,7 @@ import 'login_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 
 // ================= GLOBAL =================
 
@@ -23,9 +24,19 @@ final navigatorKey = GlobalKey<NavigatorState>();
 late FirebaseAnalytics analytics;
 final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<void>>();
 
-bool isValidStepJump(int stepJump) {
+bool _fcmListenerAdded = false;
+
+bool isValidStepJump(int stepJump, DateTime now, DateTime? lastTime) {
   if (stepJump < 0) return false;
-  if (stepJump > 100) return false; // treadmill safe margin
+
+  if (stepJump > 150) return false;
+
+
+  if (lastTime != null) {
+    final seconds = now.difference(lastTime).inSeconds;
+    if (seconds < 1 && stepJump > 20) return false;
+  }
+
   return true;
 }
 
@@ -35,6 +46,9 @@ int stepsToday = 0;
 int? _startSteps;
 int notificationCountToday = 0;
 DateTime? notificationDay;
+
+int notificationCountWeek = 0;
+DateTime? notificationWeekStart;
 
 bool userAcceptedTracking = false;
 
@@ -85,10 +99,10 @@ Future<bool> initConsentForm() async {
 
     ConsentInformation.instance.requestConsentInfoUpdate(
       params,
-      () async {
+          () async {
         if (await ConsentInformation.instance.isConsentFormAvailable()) {
           ConsentForm.loadAndShowConsentFormIfRequired(
-            (formError) async {
+                (formError) async {
               if (formError != null) {
                 debugPrint("Consent error: ${formError.message}");
                 completer.complete(false);
@@ -103,7 +117,7 @@ Future<bool> initConsentForm() async {
           completer.complete(canRequestAds);
         }
       },
-      (error) {
+          (error) {
         debugPrint("Consent update error: ${error.message}");
         completer.complete(false);
       },
@@ -132,23 +146,33 @@ Future<void> showLocalNotification(String title, String body) async {
 
   if (!notificationsEnabled) return;
 
-  if (_lastNotificationTime != null &&
-      now.difference(_lastNotificationTime!).inHours < 3) {
-    return;
-  }
 
+  if (_lastNotificationTime != null) {
+    final diff = now.difference(_lastNotificationTime!).inHours;
+    if (diff < 6) return;
+  }
   final today = DateTime.now();
   if (notificationDay == null || today.day != notificationDay!.day) {
     notificationCountToday = 0;
     notificationDay = today;
   }
 
-  if (!notificationsEnabled) return;
+
+  if (notificationWeekStart == null ||
+      now.difference(notificationWeekStart!).inDays >= 7) {
+    notificationWeekStart = now;
+    notificationCountWeek = 0;
+  }
+
   if (stepsToday < 2000) return;
+
+
   if (notificationCountToday >= 2) return;
-  if (stepsToday < 1500) return;
+  if (notificationCountWeek >= 5) return;
+
 
   notificationCountToday++;
+  notificationCountWeek++;
   _lastNotificationTime = now;
 
   await flutterLocalNotificationsPlugin.show(
@@ -160,8 +184,8 @@ Future<void> showLocalNotification(String title, String body) async {
         'smart_channel',
         'Smart Notifications',
         channelDescription: 'Global notifications',
-        importance: Importance.high,
-        priority: Priority.high,
+        importance: Importance.defaultImportance,
+        priority: Priority.defaultPriority,
         playSound: true,
       ),
     ),
@@ -170,33 +194,32 @@ Future<void> showLocalNotification(String title, String body) async {
 
 // ================= SMART NOTIFICATION ENGINE =================
 
-void smartNotificationEngine() {
-  Timer.periodic(const Duration(days: 1), (_) {
-    if (!notificationsEnabled) return;
+void smartNotificationEngine() async {
+  if (!notificationsEnabled) return;
 
-    if (_lastNotificationTime != null &&
-        DateTime.now().difference(_lastNotificationTime!).inHours < 24) {
-      return;
-    }
+  if (_lastNotificationTime != null &&
+      DateTime.now().difference(_lastNotificationTime!).inHours < 24) {
+    return;
+  }
 
-    if (stepsToday < 2000) return;
+  if (stepsToday < 2000) return;
 
-    if (stepsToday < 5000) {
-      showLocalNotification(
-        "🚶 Stay Active",
-        "Take a short walk today",
-      );
-    } else {
-      showLocalNotification(
-        "🔥 Great Job",
-        "You're doing great today!",
-      );
-    }
-  });
+  if (stepsToday < 5000) {
+    showLocalNotification(
+      "🚶 Stay Active",
+      "Take a short walk today",
+    );
+  } else {
+    showLocalNotification(
+      "🔥 Great Job",
+      "You're doing great today!",
+    );
+  }
+
+
 }
 
 // ================= SCHEDULE NOTIFICATIONS =================
-
 Future<void> scheduleDailyNotification(int id, int hour, int minute) async {
   if (!notificationsEnabled) return;
 
@@ -214,7 +237,6 @@ Future<void> scheduleDailyNotification(int id, int hour, int minute) async {
   if (scheduled.isBefore(now)) {
     scheduled = scheduled.add(const Duration(days: 1));
   }
-
   await flutterLocalNotificationsPlugin.zonedSchedule(
     id,
     "🏃 Reminder",
@@ -228,9 +250,9 @@ Future<void> scheduleDailyNotification(int id, int hour, int minute) async {
         priority: Priority.high,
       ),
     ),
-    androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
     uiLocalNotificationDateInterpretation:
-        UILocalNotificationDateInterpretation.absoluteTime,
+    UILocalNotificationDateInterpretation.absoluteTime,
     matchDateTimeComponents: DateTimeComponents.time,
   );
 }
@@ -244,19 +266,24 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  await FirebaseAppCheck.instance.activate(
+    androidProvider: AndroidProvider.playIntegrity,
+  );
+
+  setupCrashlytics();
+
   FirebaseMessaging.onBackgroundMessage(
     firebaseMessagingBackgroundHandler,
   );
 
-  await loadTrackingSetting();
+  final prefs = await SharedPreferences.getInstance();
+  userAcceptedTracking = prefs.getBool('tracking') ?? false;
 
-  analytics = FirebaseAnalytics.instance;
+  await FirebaseAnalytics.instance
+      .setAnalyticsCollectionEnabled(userAcceptedTracking);
 
-  await analytics.setAnalyticsCollectionEnabled(userAcceptedTracking);
-
-  await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(true);
-
-  setupCrashlytics();
+  await FirebaseCrashlytics.instance
+      .setCrashlyticsCollectionEnabled(true);
 
   bool adsAllowed = false;
 
@@ -268,95 +295,91 @@ Future<void> main() async {
 
   await MobileAds.instance.updateRequestConfiguration(
     RequestConfiguration(
-      tagForChildDirectedTreatment:
-          TagForChildDirectedTreatment.unspecified,
-      tagForUnderAgeOfConsent:
-          TagForUnderAgeOfConsent.unspecified,
-      maxAdContentRating: MaxAdContentRating.pg,
+      tagForChildDirectedTreatment: TagForChildDirectedTreatment.unspecified,
+      tagForUnderAgeOfConsent: TagForUnderAgeOfConsent.unspecified,
+      maxAdContentRating: MaxAdContentRating.g,
     ),
   );
 
   if (adsAllowed) {
     await MobileAds.instance.initialize();
-    MobileAds.instance.setAppMuted(false);
-    MobileAds.instance.setAppVolume(1.0);
-    debugPrint("✅ Ads initialized safely");
-  } else {
-    debugPrint("❌ Ads blocked (No consent)");
   }
 
   tz.initializeTimeZones();
   tz.setLocalLocation(tz.local);
 
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-
   await flutterLocalNotificationsPlugin.initialize(
-    const InitializationSettings(android: androidInit),
+    const InitializationSettings(
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+    ),
   );
 
   await flutterLocalNotificationsPlugin
       .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>()
+      AndroidFlutterLocalNotificationsPlugin>()
       ?.createNotificationChannel(
-        const AndroidNotificationChannel(
-          'smart_channel',
-          'Smart Notifications',
-          description: 'Global smart notifications',
-          importance: Importance.high,
-        ),
-      );
+    const AndroidNotificationChannel(
+      'smart_channel',
+      'Smart Notifications',
+      description: 'Global smart notifications',
+      importance: Importance.high,
+    ),
+  );
 
   await loadNotificationSetting();
 
-  runApp(const MyApp());
+  runApp(
+    MaterialApp(
+      navigatorKey: navigatorKey,
+      debugShowCheckedModeBanner: false,
+      home: const MyApp(),
+    ),
+  );
 }
 
-// ================= PERMISSIONS =================
 
+// ================= PERMISSIONS =================
 Future<void> requestPermissions(BuildContext context) async {
   final allowActivity = await showDialog<bool>(
     context: context,
-    builder: (_) => AlertDialog(
+    builder: (dialogContext) => AlertDialog(
       title: const Text("Step Tracking Permission"),
       content: const Text(
-        "We track your steps to show your activity, progress, and achievements.",
+        "We use activity recognition permission to count your steps and track your daily movement.",
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context, false),
+          onPressed: () => Navigator.pop(dialogContext, false),
           child: const Text("No Thanks"),
         ),
         ElevatedButton(
-          onPressed: () => Navigator.pop(context, true),
+          onPressed: () => Navigator.pop(dialogContext, true),
           child: const Text("Allow"),
         ),
       ],
     ),
   );
 
-  if (allowActivity == true) {
-    final activityStatus = await Permission.activityRecognition.request();
-    if (!activityStatus.isGranted) {
-      debugPrint("Activity permission denied");
-    }
-  }
+  if (allowActivity != true) return;
+
+  await Permission.activityRecognition.request();
 
   if (!context.mounted) return;
 
   final allowNotification = await showDialog<bool>(
     context: context,
-    builder: (_) => AlertDialog(
+    builder: (dialogContext) => AlertDialog(
       title: const Text("Enable Notifications"),
       content: const Text(
-        "We may send occasional reminders to help you stay active. You can disable them anytime.",
+        "We may send occasional reminders to help you stay active.",
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context, false),
+          onPressed: () => Navigator.pop(dialogContext, false),
           child: const Text("No Thanks"),
         ),
         ElevatedButton(
-          onPressed: () => Navigator.pop(context, true),
+          onPressed: () => Navigator.pop(dialogContext, true),
           child: const Text("Allow"),
         ),
       ],
@@ -370,25 +393,32 @@ Future<void> requestPermissions(BuildContext context) async {
   }
 
   if (notificationsEnabled) {
-    await FirebaseMessaging.instance.requestPermission();
+    await FirebaseMessaging.instance.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
   }
 }
 
-Future<bool> askTrackingPermission(BuildContext context) async {
+Future<bool> askTrackingPermission() async {
+  final context = navigatorKey.currentContext;
+  if (context == null) return false;
+
   final result = await showDialog<bool>(
     context: context,
-    builder: (_) => AlertDialog(
+    builder: (dialogContext) => AlertDialog(
       title: const Text("Data Usage"),
       content: const Text(
-        "We collect anonymous usage data such as steps and app interactions to improve app experience. No personal or sensitive data is collected or shared.",
+        "We collect your step count, device information, and app usage data to improve app performance and user experience. This data may be shared with third-party services such as Google Analytics and Firebase. No personally identifiable information is sold or shared.",
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context, false),
+          onPressed: () => Navigator.pop(dialogContext, false),
           child: const Text("no"),
         ),
         ElevatedButton(
-          onPressed: () => Navigator.pop(context, true),
+          onPressed: () => Navigator.pop(dialogContext, true),
           child: const Text("yes"),
         ),
       ],
@@ -413,19 +443,120 @@ class MyApp extends StatefulWidget {
   @override
   State<MyApp> createState() => _MyAppState();
 }
-
 class _MyAppState extends State<MyApp> {
-  Future<void> startPermissionFlow(BuildContext context) async {
-    if (!context.mounted) return;
 
-    final tracking = await askTrackingPermission(context);
+  bool isStepAvailable = true;
 
-    if (!context.mounted) return;
+  Future<bool> hasSeenPermissionDialogs() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('seen_permission_dialogs') ?? false;
+  }
 
-    if (tracking) {
-      await requestPermissions(context);
+  Future<void> setSeenPermissionDialogs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('seen_permission_dialogs', true);
+  }
+
+
+  bool _fcmInitialized = false;
+  bool _fcmTokenSaved = false;
+
+
+  late StreamSubscription<User?> _authSub;
+  StreamSubscription<RemoteMessage>? _fcmSub;
+
+
+  void initFCMListener() {
+    if (_fcmListenerAdded) return;
+    _fcmListenerAdded = true;
+
+    _fcmSub = FirebaseMessaging.onMessage.listen((message) async {
+
+      try {
+        final notification = message.notification;
+        if (notification == null) return;
+
+        final currentUser = FirebaseAuth.instance.currentUser;
+        if (currentUser == null) {
+          debugPrint("No user logged in");
+          return;
+        }
+
+        final uid = currentUser.uid;
+        final title = notification.title ?? "Notification";
+        final body = notification.body ?? "";
+
+
+        await Future.wait([
+          _saveNotification(uid, title, body),
+          showLocalNotification(title, body),
+        ]);
+
+
+        final snapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('notifications')
+            .orderBy('createdAt', descending: true)
+            .limit(50)
+            .get();
+
+        if (snapshot.docs.length > 40) {
+          Future.microtask(() async {
+            for (var doc in snapshot.docs.skip(30)) {
+              await doc.reference.delete();
+            }
+          });
+        }
+
+      } catch (e, stack) {
+        debugPrint("FCM error: $e");
+
+        await FirebaseCrashlytics.instance.recordError(
+          e,
+          stack,
+          fatal: false,
+        );
+      }
+    });
+  }
+
+  Future<void> _saveNotification(String uid, String title, String body) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('notifications')
+          .add({
+        'title': title,
+        'body': body,
+        'createdAt': FieldValue.serverTimestamp(),
+        'read': false,
+      });
+    } catch (e, stack) {
+      debugPrint("Firestore error: $e");
+
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        fatal: false,
+      );
     }
   }
+
+  Future<void> startPermissionFlow() async {
+    final seen = await hasSeenPermissionDialogs();
+    if (seen) return;
+
+    final tracking = await askTrackingPermission();
+
+    if (tracking) {
+      await requestPermissions(navigatorKey.currentContext!);
+    }
+
+    await setSeenPermissionDialogs();
+  }
+
 
   StreamSubscription<StepCount>? _stepSub;
   bool _started = false;
@@ -435,179 +566,269 @@ class _MyAppState extends State<MyApp> {
   DateTime? _lastSave;
   int _lastSavedSteps = 0;
 
-  Future<void> _loadSteps() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+  void _listenSteps() async {
 
-    final doc = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
+    if (!isStepAvailable) {
+      debugPrint("Step counter not supported on this device");
+      return;
+    }
 
-    final data = doc.data();
+    final status = await Permission.activityRecognition.status;
 
-    stepsToday = data?['steps'] ?? 0;
-    _startSteps = data?['initialSteps'];
+    if (!status.isGranted) {
+      debugPrint("Permission not granted");
+      return;
+    }
 
-    debugPrint("LOADED stepsToday = $stepsToday");
-    debugPrint("LOADED startSteps = $_startSteps");
+    try {
+      _stepSub = Pedometer.stepCountStream.listen(
+            (event) {
+          _handleStep(event);
+        },
+
+        onError: (error) async {
+          debugPrint("STEP ERROR: $error");
+          isStepAvailable = false;
+
+          await _stepSub?.cancel();
+
+          await FirebaseCrashlytics.instance.recordError(
+            error,
+            null,
+            fatal: false,
+          );
+        },
+
+        cancelOnError: true,
+      );
+    } catch (e, stack) {
+      debugPrint("Pedometer init error: $e");
+
+      isStepAvailable = false;
+
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        fatal: false,
+      );
+    }
   }
+
+  Future<void> _loadSteps(User user) async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      final data = doc.data();
+
+      if (data != null) {
+        final steps = data['steps'];
+        if (steps is int) {
+          stepsToday = steps;
+        } else if (steps is num) {
+          stepsToday = steps.toInt();
+        }
+
+        final start = data['initialSteps'];
+        if (start is int) {
+          _startSteps = start;
+        } else if (start is num) {
+          _startSteps = start.toInt();
+        }
+      }
+
+      debugPrint("LOADED stepsToday = $stepsToday");
+      debugPrint("LOADED startSteps = $_startSteps");
+    } catch (e, stack) {
+      debugPrint("Load steps error: $e");
+
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        fatal: false,
+      );
+    }
+  }
+
+
 
   @override
   void initState() {
     super.initState();
 
-    FirebaseAuth.instance.authStateChanges().listen((user) {
-      if (user != null) {
-        _start();
-      }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _authSub = FirebaseAuth.instance.authStateChanges().listen((user) async {
+        if (!mounted) return;
+        if (user == null) return;
+
+        try {
+          await _initFCM();
+          await _loadSteps(user);
+          await _start(user);
+        } catch (e) {
+          debugPrint("Auth flow error: $e");
+        }
+      });
     });
   }
 
-  void _initFCM() {
-    if (notificationsEnabled) {
-      FirebaseMessaging.instance.getToken().then((token) async {
-        if (kDebugMode) {
-          debugPrint("FCM Token: $token");
-        }
 
-        final user = FirebaseAuth.instance.currentUser;
-        if (user != null && token != null) {
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(user.uid)
-              .set({'fcmToken': token}, SetOptions(merge: true));
-        }
-      });
-    }
+  Future<void> _initFCM() async {
+    if (_fcmInitialized) return;
+    _fcmInitialized = true;
 
-    if (notificationsEnabled) {
-      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
-        final user = FirebaseAuth.instance.currentUser;
-        if (user != null) {
-          await FirebaseFirestore.instance
-              .collection('users')
-              .doc(user.uid)
-              .set({'fcmToken': newToken}, SetOptions(merge: true));
-        }
-      });
-    }
-
-    FirebaseMessaging.onMessage.listen((message) {
-      if (message.notification == null) return;
-      if (!notificationsEnabled) return;
-
-      showLocalNotification(
-        message.notification!.title ?? "Notification",
-        message.notification!.body ?? "",
-      );
-    });
-
-    FirebaseMessaging.onMessageOpenedApp.listen((message) {
-      FirebaseAnalytics.instance.logEvent(
-        name: "notification_click",
-      );
-    });
-  }
-
-  void _listenSteps() async {
-    final status = await Permission.activityRecognition.status;
-    if (!status.isGranted) return;
-
-    _stepSub = Pedometer.stepCountStream.listen((event) async {
-      _startSteps ??= event.steps;
-
-      final start = _startSteps ?? event.steps;
-      final diff = event.steps - start;
-
-      if (diff < 0) return;
-
-      final now = DateTime.now();
-      final rawSteps = event.steps;
-      final stepJump = rawSteps - _lastRawSteps;
-
-      if (!isValidStepJump(stepJump)) return;
-
-      if (_lastStepTime != null &&
-          now.difference(_lastStepTime!).inSeconds < 2 &&
-          stepJump > 200) {
-        return;
+    try {
+      if (notificationsEnabled) {
+        await FirebaseMessaging.instance.requestPermission();
       }
-
-      if (diff > 20000) {
-        stepsToday = 20000;
-      }
-
-      _lastRawSteps = rawSteps;
-      _lastStepTime = now;
-
-      setState(() {
-        stepsToday = diff;
-      });
 
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
 
-      final saveInterval = Duration(seconds: 15);
+      final uid = user.uid;
 
-      if (_lastSave == null ||
-          now.difference(_lastSave!) > saveInterval ||
-          (stepsToday - _lastSavedSteps).abs() > 200) {
-        _lastSave = now;
-        _lastSavedSteps = stepsToday;
+      final token = await FirebaseMessaging.instance.getToken();
+
+      if (token != null && !_fcmTokenSaved) {
+        _fcmTokenSaved = true;
 
         await FirebaseFirestore.instance
             .collection('users')
-            .doc(user.uid)
+            .doc(uid)
             .set({
-          'steps': stepsToday.clamp(0, 20000),
-          'initialSteps': _startSteps ?? 0,
-          'lastUpdated': FieldValue.serverTimestamp(),
+          'fcmToken': token,
+          'lastTokenUpdate': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       }
-    });
+
+      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+        final currentUser = FirebaseAuth.instance.currentUser;
+        if (currentUser == null) return;
+
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .set({
+          'fcmToken': newToken,
+          'lastTokenUpdate': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      });
+
+    } catch (e) {
+      debugPrint("FCM ERROR: $e");
+    }
   }
 
-  Future<void> _start() async {
+
+  void _handleStep(StepCount event) async {
+    _startSteps ??= event.steps;
+    final now = DateTime.now();
+
+    final rawSteps = event.steps;
+
+    // reset detection (safe)
+    if (event.steps < _lastRawSteps) {
+      final diffReset = _lastRawSteps - event.steps;
+
+      if (diffReset > 1000) {
+        _startSteps = event.steps;
+      }
+
+      _lastRawSteps = event.steps;
+      return;
+    }
+
+    final stepJump = rawSteps - _lastRawSteps;
+
+    if (!isValidStepJump(stepJump, now, _lastStepTime)) return;
+
+    if (stepJump > 250) return;
+
+    _lastRawSteps = rawSteps;
+    _lastStepTime = now;
+
+    final diff = (event.steps - _startSteps!).clamp(0, 200000);
+    final steps = diff;
+
+    if (!mounted) return;
+    setState(() {
+      stepsToday = steps;
+    });
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    if (_lastSave == null ||
+        now.difference(_lastSave!) > const Duration(minutes: 5) ||
+        (stepsToday - _lastSavedSteps).abs() > 300) {
+
+      _lastSave = now;
+      _lastSavedSteps = stepsToday;
+
+      unawaited(
+        FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .set({
+          'steps': stepsToday,
+          'initialSteps': _startSteps ?? 0,
+          'lastUpdated': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true)),
+      );
+    }
+  }
+
+
+
+  Future<void> _start(User user) async {
     if (_started) return;
     _started = true;
 
     await loadTrackingSetting();
     await loadNotificationSetting();
 
-    _initFCM();
-
-    if (!mounted) return;
-
-    await startPermissionFlow(context);
-
-    await _loadSteps();
+    initFCMListener();
 
     if (userAcceptedTracking) {
+      await Future.delayed(const Duration(seconds: 2));
       _listenSteps();
     }
 
     if (notificationsEnabled) {
-      smartNotificationEngine();
+      Future.delayed(const Duration(minutes: 5), () {
+        if (mounted) smartNotificationEngine();
+      });
+
       scheduleDailyNotification(1, 10, 0);
       scheduleDailyNotification(2, 18, 0);
     }
+
+    Future.delayed(const Duration(seconds: 1), () async {
+      try {
+        if (!mounted) return;
+        await startPermissionFlow();
+      } catch (e, stack) {
+        FirebaseCrashlytics.instance.recordError(
+          e,
+          stack,
+          fatal: false,
+        );
+      }
+    });
   }
 
   @override
   void dispose() {
+    _fcmSub?.cancel();
+    _authSub.cancel();
     _stepSub?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: navigatorKey,
-      navigatorObservers: [routeObserver],
-      debugShowCheckedModeBanner: false,
-      title: "Go Earn",
-      home: const LoginPage(),
-    );
+    return const LoginPage();
   }
 }

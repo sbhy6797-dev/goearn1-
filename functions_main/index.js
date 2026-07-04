@@ -406,6 +406,11 @@ exports.theoremreachPostback = onRequest(async (req, res) => {
     // ================= REWARD =================
     const reward = Number(req.query.reward || 0);
 
+    if (reward === undefined || reward === null || isNaN(reward)) {
+      console.log("❌ INVALID REWARD");
+      return res.status(400).send("INVALID REWARD");
+    }
+
     // ================= TX ID =================
     const tx_id = (
       req.query.tx_id ||
@@ -437,7 +442,8 @@ exports.theoremreachPostback = onRequest(async (req, res) => {
     }
 
     // ================= COINS =================
-    let coins = Math.floor(reward * 1000);
+
+    let coins = Math.floor(reward * 1);
 
     if (screenout == 1) {
       coins = Math.max(coins, 50);
@@ -449,10 +455,10 @@ exports.theoremreachPostback = onRequest(async (req, res) => {
     const userRef = admin.firestore().collection("users").doc(userId);
 
     await userRef.set({
-      totalCoins: admin.firestore.FieldValue.increment(coins),
-      theoremEarnings: admin.firestore.FieldValue.increment(reward),
+      totalCoins: admin.firestore.FieldValue.increment(Math.floor(reward)),
       lastUpdate: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
+
 
     // ================= LOG =================
     await logRef.set({
@@ -483,83 +489,100 @@ exports.theoremreachPostback = onRequest(async (req, res) => {
 
 exports.myleadPostback = onRequest(async (req, res) => {
   try {
+    console.log("🔥 RAW POSTBACK FULL:", JSON.stringify(req.query, null, 2));
+    console.log("🔥 RAW URL:", req.originalUrl);
 
-    console.log("🔥 MYLEAD POSTBACK:", req.query);
-
-    const data = req.method === "POST" ? req.body : req.query;
+    const data = req.query;
 
     // ================= USER =================
-    const userId =
-      data.subid ||
-      data.sub_id ||
-      data.external_id ||
-      data.user_id;
+    const userIdRaw = data.ml_sub1;
 
-    // ================= TRANSACTION =================
+    const userId =
+      userIdRaw &&
+      !["[subid]", "undefined", "null", ""].includes(userIdRaw)
+        ? userIdRaw.toString().trim()
+        : null;
+
+    if (!userId) {
+      console.log("❌ INVALID userId:", userIdRaw);
+      return res.status(200).send("OK");
+    }
+
+    // ================= TX ID =================
+    const tx_idRaw = data.transaction_id;
+
     const tx_id =
-      data.transaction_id ||
-      data.tx_id ||
-      `${Date.now()}`;
+      tx_idRaw &&
+      !["undefined", "null", ""].includes(tx_idRaw)
+        ? tx_idRaw.toString().trim()
+        : `${Date.now()}`;
 
     // ================= PAYOUT =================
-    const payout = Number(data.payout || data.amount || 0);
+    const payout = Number(data.payout_decimal || data.payout || 0);
 
     // ================= STATUS =================
-    const status = Number(data.status ?? 1);
+    const status = (data.status || "").toString().toLowerCase();
 
-    // ================= VALIDATION =================
-    if (!userId) {
-      console.log("❌ Missing userId");
-      return res.status(200).send("OK");
-    }
-
-    // ================= DUPLICATE CHECK =================
-    const logRef = admin.firestore()
-      .collection("mylead_logs")
-      .doc(tx_id);
-
-    const logSnap = await logRef.get();
-
-    if (logSnap.exists) {
-      console.log("⚠️ DUPLICATE:", tx_id);
-      return res.status(200).send("OK");
-    }
-
-    // ================= COINS =================
-    let coins = Math.floor(payout * 1000);
-
-    // لو rejected
-    if (status === 0 || status === 2) {
-      coins = 0;
-    }
-
-    const userRef = admin.firestore().collection("users").doc(userId);
-
-    await userRef.set({
-      totalCoins: admin.firestore.FieldValue.increment(coins),
-      myleadEarnings: admin.firestore.FieldValue.increment(payout),
-      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
-
-    // ================= LOG =================
-    await logRef.set({
+    console.log("🔥 PARSED DATA:", {
       userId,
       tx_id,
       payout,
-      coins,
       status,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    console.log("✅ MYLEAD SUCCESS:", { userId, coins });
+    if (status !== "approved") {
+      console.log("⛔ NOT APPROVED:", status);
+      return res.status(200).send("IGNORED");
+    }
+
+    // ================= COINS =================
+    const coins = Math.floor(payout * 10);
+
+    const db = admin.firestore();
+
+    const userRef = db.collection("users").doc(userId);
+    const logRef = db.collection("mylead_logs").doc(tx_id);
+
+    await db.runTransaction(async (t) => {
+      const logSnap = await t.get(logRef);
+
+      if (logSnap.exists) {
+        console.log("⚠️ DUPLICATE TX:", tx_id);
+        return;
+      }
+
+      t.set(
+        userRef,
+        {
+          totalCoins: admin.firestore.FieldValue.increment(coins),
+          myleadEarnings: admin.firestore.FieldValue.increment(payout),
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      t.set(logRef, {
+        userId,
+        tx_id,
+        payout,
+        coins,
+        status,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    console.log("✅ SUCCESS PAYOUT:", { userId, coins, payout });
 
     return res.status(200).send("OK");
-
   } catch (e) {
-    console.error("❌ MYLEAD ERROR:", e);
-    return res.status(500).send("ERROR");
+    console.error("❌ ERROR:", e);
+    return res.status(200).send("ERROR");
   }
 });
+
+
+
+
 
 
 
@@ -620,7 +643,7 @@ exports.admantumPostback = onRequest(async (req, res) => {
       return res.status(200).send("OK"); // duplicate safe
     }
 
-    const coins = Math.floor(reward * 1000);
+    const coins = Math.floor(reward * 1);
 
     const finalCoins = status === 0 ? -coins : coins;
 
@@ -654,56 +677,6 @@ exports.admantumPostback = onRequest(async (req, res) => {
 
 
 
-
-
-
-
-
-
-exports.bitcotasksPostback = onRequest(async (req, res) => {
-  try {
-
-    const data = req.method === "POST" ? req.body : req.query;
-
-    const userId = data.subId;
-    const reward = Number(data.reward || 0);
-    const status = Number(data.status || 1);
-    const tx_id = data.transId;
-
-    if (!userId) return res.status(200).send("ok");
-
-    const logId = `${userId}_${tx_id}`;
-    const logRef = admin.firestore().collection("bitcotasks_logs").doc(logId);
-
-    const snap = await logRef.get();
-    if (snap.exists) return res.status(200).send("ok");
-
-    const coins = Math.floor(reward * 1000);
-    const finalCoins = status === 2 ? -coins : coins;
-
-    const userRef = admin.firestore().collection("users").doc(userId);
-
-    await userRef.set({
-      totalCoins: admin.firestore.FieldValue.increment(finalCoins),
-      bitcotasksEarnings: admin.firestore.FieldValue.increment(reward),
-      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
-
-    await logRef.set({
-      userId,
-      reward,
-      tx_id,
-      status,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    return res.status(200).send("ok");
-
-  } catch (e) {
-    console.error(e);
-    return res.status(500).send("error");
-  }
-});
 
 
 
@@ -789,116 +762,6 @@ exports.pollmaticPostback = onRequest(async (req, res) => {
 
 
 
-
-
-exports.rapidoreachCallback = onRequest(async (req, res) => {
-  try {
-    console.log("🔥 RAW CALLBACK:", req.query);
-
-    // =========================
-    // 🔹 GET ONLY (حسب التوثيق)
-    // =========================
-    const data = req.query;
-
-    // =========================
-    // 👤 USER ID (الأهم)
-    // =========================
-    const userId = data.endUserId || data.userId;
-
-    // =========================
-    // 🧾 TRANSACTION ID
-    // =========================
-    const transactionId = data.transactionId;
-
-    // =========================
-    // 💰 REWARD
-    // =========================
-    const rewardCoins = Number(data.currencyAmt || 0);
-    const rewardUsd = Number(data.amt || 0);
-
-    // =========================
-    // 📌 STATUS
-    // COMPLETE / QUOTAFULL / TERMINATION
-    // =========================
-    const status = data.status;
-
-    // =========================
-    // ❌ VALIDATION
-    // =========================
-    if (!userId || !transactionId) {
-      console.log("❌ Missing data:", data);
-      return res.status(200).send("0"); // فشل
-    }
-
-    // =========================
-    // 🔒 DUPLICATE CHECK
-    // =========================
-    const logRef = admin.firestore()
-      .collection("rapidoreach_logs")
-      .doc(transactionId);
-
-    const logSnap = await logRef.get();
-
-    if (logSnap.exists) {
-      console.log("⚠️ Duplicate transaction:", transactionId);
-      return res.status(200).send("1");
-    }
-
-    // =========================
-    // 💰 CALCULATE COINS
-    // =========================
-    let coins = Math.floor(rewardCoins);
-
-    // Status handling
-    if (status === "COMPLETE") {
-      // OK
-    }
-    else if (status === "QUOTAFULL" || status === "TERMINATION") {
-      coins = 0; // لا مكافأة أو ممكن سالب لو عايز
-    }
-
-    // =========================
-    // 👤 UPDATE USER
-    // =========================
-    const userRef = admin.firestore()
-      .collection("users")
-      .doc(userId);
-
-    await userRef.set({
-      totalCoins: admin.firestore.FieldValue.increment(coins),
-      rapidoreachEarnings: admin.firestore.FieldValue.increment(rewardUsd),
-      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
-
-    // =========================
-    // 🧾 SAVE LOG
-    // =========================
-    await logRef.set({
-      userId,
-      transactionId,
-      rewardCoins,
-      rewardUsd,
-      status,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    console.log("✅ SUCCESS:", { userId, coins });
-
-    // =========================
-    // ✅ RESPONSE (مهم جداً)
-    // =========================
-    return res.status(200).send("1");
-
-  } catch (e) {
-    console.error("❌ ERROR:", e);
-    return res.status(200).send("0");
-  }
-});
-
-
-
-
-
 exports.cpagripPostback = onRequest(async (req, res) => {
   try {
     console.log("🔥 QUERY:", req.query);
@@ -929,7 +792,7 @@ exports.cpagripPostback = onRequest(async (req, res) => {
       return res.status(400).send("INVALID PAYOUT");
     }
 
-    const coins = Math.floor(payout * 1000);
+    const coins = Math.floor(payout * 10);
 
     const userRef = admin.firestore().collection("users").doc(userId);
 
@@ -967,93 +830,133 @@ exports.cpagripPostback = onRequest(async (req, res) => {
 
 
 
-exports.mobideaPostback = onRequest(async (req, res) => {
+exports.offerwallXPostback = onRequest(async (req, res) => {
   try {
+    const data = req.query && Object.keys(req.query).length
+      ? req.query
+      : req.body;
 
-    console.log("🔥 MOBIDEA POSTBACK:", req.query);
+    console.log("POSTBACK:", data);
 
-    // =========================
-    // 👤 USER ID
-    // =========================
-    const userId =
-      req.query.external_id ||
-      req.query.user_id;
+    const subId = (data.subId || "").trim();
+    const transId = (data.transId || "").trim();
+    const rewardRaw = data.reward;
 
-    // =========================
-    // 💰 PAYOUT
-    // =========================
-    const payout = Number(req.query.payout || 0);
-
-    // =========================
-    // 🧾 TRANSACTION ID
-    // =========================
-    const tx_id =
-      req.query.transaction_id ||
-      req.query.conversion_id ||
-      `${Date.now()}`;
-
-    // =========================
-    // ❌ VALIDATION
-    // =========================
-    if (!userId) {
-      console.log("❌ Missing USER ID");
-      return res.status(200).send("OK");
+    if (!subId || !transId || rewardRaw === undefined) {
+      console.log("Missing params");
+      return res.status(400).send("missing params");
     }
 
-    // =========================
-    // 🔒 DUPLICATE CHECK
-    // =========================
-    const logRef = admin.firestore()
-      .collection("mobidea_logs")
-      .doc(tx_id);
+    const reward = parseFloat(String(rewardRaw).trim());
+    const coins = Math.round(reward * 100);
 
-    const logSnap = await logRef.get();
+    const docRef = admin.firestore().collection("offerwall_logs").doc(transId);
 
-    if (logSnap.exists) {
-      console.log("⚠️ DUPLICATE");
-      return res.status(200).send("OK");
+    if ((await docRef.get()).exists) {
+      return res.status(200).send("ok");
     }
 
-    // =========================
-    // 💰 CALCULATE COINS
-    // =========================
-    const coins = Math.floor(payout * 1000);
-
-    // =========================
-    // 👤 UPDATE USER
-    // =========================
-    const userRef = admin.firestore()
-      .collection("users")
-      .doc(userId);
-
-    await userRef.set({
+    await admin.firestore().collection("users").doc(subId).set({
       totalCoins: admin.firestore.FieldValue.increment(coins),
-      mobideaEarnings: admin.firestore.FieldValue.increment(payout),
-      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      lastUpdate: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    // =========================
-    // 🧾 SAVE LOG
-    // =========================
-    await logRef.set({
-      userId,
-      payout,
-      tx_id,
+    await docRef.set({
+      subId,
+      transId,
+      reward,
       coins,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    console.log("✅ MOBIDEA SUCCESS:", {
+    return res.status(200).send("ok");
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).send("error");
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+exports.ccxuaPostback = onRequest(async (req, res) => {
+  try {
+    const data = req.query || req.body;
+
+    console.log("🔥 CCXUA POSTBACK:", data);
+
+    const userId = (data.subId || "").trim();
+    const transId = (data.transId || "").trim();
+    const reward = Number(data.reward || 0);
+    const status = Number(data.status || 1);
+    const signature = data.signature;
+
+    const secret = "YOUR_CCXUA_SECRET"; // من لوحة c.cx.ua
+
+    // ❌ validation
+    if (!userId || !transId) {
+      return res.status(200).send("OK");
+    }
+
+    // 🔐 verify signature
+    const crypto = require("crypto");
+    const expected = crypto
+      .createHash("md5")
+      .update(userId + transId + reward + secret)
+      .digest("hex");
+
+    if (signature && signature !== expected) {
+      console.log("❌ INVALID SIGNATURE");
+      return res.status(403).send("FORBIDDEN");
+    }
+
+    // 🔒 prevent duplicates
+    const logRef = admin.firestore()
+      .collection("ccxua_logs")
+      .doc(transId);
+
+    if ((await logRef.get()).exists) {
+      return res.status(200).send("DUP");
+    }
+
+    let coins = Math.floor(reward * 1000); // عدّلها حسب نظامك
+
+    if (status === 2) coins = -coins;
+
+    const userRef = admin.firestore().collection("users").doc(userId);
+
+    await userRef.set({
+      totalCoins: admin.firestore.FieldValue.increment(coins),
+      ccxuaEarnings: admin.firestore.FieldValue.increment(reward),
+      lastUpdate: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    await logRef.set({
       userId,
-      coins
+      transId,
+      reward,
+      coins,
+      status,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    return res.status(200).send("OK");
+    return res.status(200).send("ok");
 
   } catch (e) {
-
-    console.error("❌ MOBIDEA ERROR:", e);
-
-    return res.status(500).send("ERROR");
+    console.error("❌ CCXUA ERROR:", e);
+    return res.status(500).send("error");
   }
 });

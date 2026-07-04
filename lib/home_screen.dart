@@ -289,186 +289,124 @@ class _HomeScreenState
   Future<void> _signInWithGoogle() async {
     if (_isLoading) return;
 
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
 
     try {
-      // Analytics
       await analytics.logEvent(
         name: 'login_attempt',
-        parameters: {
-          'method': 'google',
-        },
+        parameters: {'method': 'google'},
       );
 
-      // Google Sign In
-      final googleUser =
-      await googleSignIn
-          .signIn()
-          .timeout(
-        const Duration(seconds: 15),
+      // ✅ حماية Google Sign-In من التهنيج
+      final googleUser = await googleSignIn.signIn().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException("Google sign-in timeout");
+        },
       );
 
       // User cancelled
       if (googleUser == null) {
-        await analytics.logEvent(
-          name: 'login_cancelled',
-        );
-
+        await analytics.logEvent(name: 'login_cancelled');
         return;
       }
 
-      final googleAuth =
-      await googleUser.authentication;
+      final googleAuth = await googleUser.authentication;
 
-      // Tokens check
       if (googleAuth.accessToken == null ||
           googleAuth.idToken == null) {
-        throw Exception(
-          'Google tokens are missing',
-        );
+        throw Exception('Google tokens are missing');
       }
 
-      // Firebase credential
-      final credential =
-      GoogleAuthProvider.credential(
-        accessToken:
-        googleAuth.accessToken,
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
-      // Firebase Login
-      final userCredential =
-      await FirebaseAuth.instance
-          .signInWithCredential(
-        credential,
-      );
+      // ✅ حماية Firebase Auth
+      final userCredential = await FirebaseAuth.instance
+          .signInWithCredential(credential)
+          .timeout(const Duration(seconds: 12));
 
-      final user =
-          userCredential.user;
+      final user = userCredential.user;
 
-      if (user == null) {
-        throw Exception(
-          'Firebase user is null',
-        );
-      }
+      if (user == null) return;
 
-      // Crashlytics User
-      await FirebaseCrashlytics.instance
-          .setUserIdentifier(user.uid);
+      await FirebaseCrashlytics.instance.setUserIdentifier(user.uid);
 
       final userRef =
-      FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid);
+      FirebaseFirestore.instance.collection('users').doc(user.uid);
 
-      final doc =
-      await userRef
-          .get()
-          .timeout(
-        const Duration(seconds: 15),
-      );
+      // ✅ حماية Firestore
+      DocumentSnapshot doc;
 
-      // =========================
-      // NEW USER
-      // =========================
+      try {
+        doc = await userRef.get().timeout(
+          const Duration(seconds: 10),
+        );
+      } catch (_) {
+        await Future.delayed(const Duration(seconds: 1));
+        doc = await userRef.get();
+      }
 
       if (!doc.exists) {
-        await userRef.set(
-          defaultUserData(user),
-        );
+        await userRef.set(defaultUserData(user));
+      } else {
+        final data = doc.data() as Map<String, dynamic>;
+        await fixUserData(userRef, data, user);
+        await checkDailyReset(userRef, data);
       }
-
-      // =========================
-      // OLD USER
-      // =========================
-
-      else {
-        final data =
-        doc.data()
-        as Map<String, dynamic>;
-
-        // Fix missing data
-        await fixUserData(
-          userRef,
-          data,
-          user,
-        );
-
-        // Daily reset
-        await checkDailyReset(
-          userRef,
-          data,
-        );
-      }
-
-      // =========================
-      // UPDATE LOGIN INFO
-      // =========================
 
       await userRef.set({
         'email': user.email ?? '',
-
-        'displayName':
-        user.displayName ?? '',
-
-        'photoURL':
-        user.photoURL ?? '',
-
-        'lastLogin':
-        FieldValue.serverTimestamp(),
-
-        'lastUpdate':
-        FieldValue.serverTimestamp(),
-
-        'loginCount':
-        FieldValue.increment(1),
+        'displayName': user.displayName ?? '',
+        'photoURL': user.photoURL ?? '',
+        'lastLogin': FieldValue.serverTimestamp(),
+        'lastUpdate': FieldValue.serverTimestamp(),
+        'loginCount': FieldValue.increment(1),
       }, SetOptions(merge: true));
 
-      // Analytics
-      await analytics.logEvent(
-        name: 'login_success',
-      );
+      await analytics.logEvent(name: 'login_success');
 
       if (!mounted) return;
 
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) => MainScreen(
-            totalCoins: 0,
-          ),
+          builder: (_) => MainScreen(totalCoins: 0),
+        ),
+      );
+
+    } on TimeoutException {
+      // ❌ مش كراش → رسالة فقط
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Connection is slow, try again'),
+          backgroundColor: Colors.orange,
         ),
       );
 
     } catch (e, stack) {
       debugPrint(e.toString());
-
       debugPrint(stack.toString());
 
-      await FirebaseCrashlytics.instance
-          .recordError(
-        e,
-        stack,
-      );
+      // ❌ متسجلش timeout كـ crash
+      if (e is! TimeoutException) {
+        await FirebaseCrashlytics.instance.recordError(e, stack);
+      }
 
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Login failed',
-          ),
+          content: Text('Login failed'),
           backgroundColor: Colors.red,
         ),
       );
+
     } finally {
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        setState(() => _isLoading = false);
       }
     }
   }

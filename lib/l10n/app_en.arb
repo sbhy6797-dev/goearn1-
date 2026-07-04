@@ -1,0 +1,45 @@
+{
+  "stepTrackingPermissionTitle": "Step Tracking Permission",
+  "stepTrackingPermissionBody": "We use activity recognition permission to count your steps and track your daily movement.",
+  "noThanks": "No Thanks",
+  "allow": "Allow",
+
+  "enableNotificationsTitle": "Enable Notifications",
+  "enableNotificationsBody": "We may send occasional reminders to help you stay active.",
+
+  "dataUsageTitle": "Data Usage",
+  "dataUsageBody": "We collect your step count, device information, and app usage data to improve app performance and user experience. This data may be shared with third-party services such as Google Analytics and Firebase. No personally identifiable information is sold or shared.",
+
+  "yes": "Yes",
+  "no": "No",
+
+  "stayActive": "Stay Active",
+  "takeWalk": "Take a short walk today",
+  "greatJob": "Great Job",
+  "doingGreat": "You're doing great today!",
+
+  "reminder": "Reminder",
+  "stayHealthy": "Stay active and healthy",
+
+  "noUserLoggedIn": "No user logged in",
+  "stepCounterNotSupported": "Step counter not supported on this device",
+  "permissionNotGranted": "Permission not granted",
+  "stepError": "Step error",
+  "pedometerInitError": "Pedometer initialization error",
+  "loadStepsError": "Error loading steps",
+  "fcmError": "FCM error",
+  "firestoreError": "Firestore error",
+
+  "surveyTitle": "Complete surveys and earn rewards ✨",
+  "surveySubtitle": "Choose any network to start earning rewards",
+
+  "howToEarn": "How to earn",
+  "followSteps": "Follow these steps:",
+  "step1": "1️⃣ Open the offer",
+  "step2": "2️⃣ Complete all required steps",
+  "step3": "3️⃣ Download app or register if needed",
+  "step4": "4️⃣ Rewards will be added automatically",
+  "warningNoRewardClick": "⚠️ Clicking alone does not give rewards",
+  "cancel": "Cancel",
+  "startNow": "Start Now"
+}
