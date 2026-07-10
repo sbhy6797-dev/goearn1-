@@ -64,6 +64,15 @@ final List<SurveyNetwork> networks = const [
 
 
   SurveyNetwork(
+    'TimeWall',
+    'Offers & Surveys',
+    'assets/images/timwall.png',
+    'https://timewall.io/users/login?oid=46cff4aeda4bee27&uid=USER_ID',
+  ),
+
+
+
+  SurveyNetwork(
     'RapidoReach',
     'Offers & Surveys',
     'assets/images/rapidrach.png',
@@ -72,11 +81,19 @@ final List<SurveyNetwork> networks = const [
 
 
   SurveyNetwork(
-    'AdMantum',
-    'Reward Network',
-    'assets/images/admantum.png',
+    'offerwall',
+    'Tasks & Surveys',
+    'assets/images/offerwall.png',
+    'https://offerwall.me/offerwall/smovobh1aoydx367c1v9kqleqlyp78/[USER_ID]',
+  ),
 
-    'https://www.admantum.com/offers?appid=51183&uid=USER_ID',
+
+
+  SurveyNetwork(
+    'tplayad',
+    'PTC + Offerwall',
+    'assets/images/tplayad.png',
+    'https://tplayad.com/offer/Ed7Bn1/[USER_ID]',
   ),
 
   SurveyNetwork(
@@ -88,13 +105,11 @@ final List<SurveyNetwork> networks = const [
 
 
   SurveyNetwork(
-    'MyLead',
+    'MobiVortex',
     'Offers & Surveys',
-    'assets/images/mylead.png',
-    'https://reward-me.eu/4cbc0d18-57af-11f1-b2be-129a1c289511',
+    'assets/images/MobiVortex.png',
+    'https://vortexwall.com/ow/6a4c0d40be991f606453521f/USER_ID',
   ),
-
-
 
 
   SurveyNetwork(
@@ -104,20 +119,6 @@ final List<SurveyNetwork> networks = const [
     'https://theoremreach.com/respondent_entry/direct?placementId=71b42ce0-8e8d-46b3-8732-e03d0918baa9',
   ),
 
-
-  SurveyNetwork(
-    'offerwall',
-    'Tasks & Surveys',
-    'assets/images/offerwall.png',
-    'https://offerwall.me/offerwall/smovobh1aoydx367c1v9kqleqlyp78/[USER_ID]',
-  ),
-
-  SurveyNetwork(
-    'AoyCo',
-    'PTC + Offerwall',
-    'assets/images/aoyco.png',
-    'https://aoyco.in/offerwall/QO85oCW4UBP5fcdiRuVjVElVK7Uulh6p/[USER_ID]',
-  ),
 
 ];
 
@@ -683,15 +684,20 @@ class SurveyCard extends StatelessWidget {
         }
 
 
-// =================    AoyCo   =================
+// ================= Tplayad =================
 
-        else if (network.name == 'AoyCo') {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const AoyCoPage(),
-            ),
+        else if (network.name == 'tplayad') {
+          final user = FirebaseAuth.instance.currentUser;
+          if (user == null) return;
+
+          final url =
+              'https://tplayad.com/offer/Ed7Bn1/${user.uid}';
+
+          await launchUrl(
+            Uri.parse(url),
+            mode: LaunchMode.externalApplication,
           );
+
           return;
         }
 
@@ -712,68 +718,51 @@ class SurveyCard extends StatelessWidget {
 
           return;
         }
-        // ================= MyLead =================
-        else if (network.name == 'MyLead') {
 
-          final userId = FirebaseAuth.instance.currentUser!.uid;
 
-          url =
-          'https://reward-me.eu/4cbc0d18-57af-11f1-b2be-129a1c289511'
-              '?player_id=$userId';
 
-          try {
-            final uri = Uri.parse(url);
 
-            final launched = await launchUrl(
-              uri,
-              mode: LaunchMode.externalApplication,
-            );
+// ================= MobiVortex =================
 
-            if (!launched) {
 
-              if (!context.mounted) return;
 
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Unable to open link'),
-                ),
-              );
-            }
-          } catch (e) {
-            debugPrint("Launch error: $e");
+        else if (network.name == 'MobiVortex') {
 
-            if (!context.mounted) return;
+          final user = FirebaseAuth.instance.currentUser;
+          if (user == null) return;
 
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Unable to open link'),
-              ),
-            );
-          }
+          final userId = user.uid;
+
+          final url =
+              'https://vortexwall.com/ow/'
+              '6a4c0d40be991f606453521f/'
+              '$userId';
+
+          await launchUrl(
+            Uri.parse(url),
+            mode: LaunchMode.externalApplication,
+          );
 
           return;
         }
 
 
-// ================= AdMantum =================
-        else if (network.name == 'AdMantum') {
 
-          url =
-          'https://www.admantum.com/offers'
-              '?appid=51183'
-              '&uid=${user.uid}'
-              '&subid=flutter_app';
 
-          try {
-            final uri = Uri.parse(url);
+// ================= timwall =================
 
-            await launchUrl(
-              uri,
-              mode: LaunchMode.externalApplication,
-            );
-          } catch (e) {
-            debugPrint("Launch error: $e");
-          }
+
+
+        if (network.name == 'TimeWall') {
+          final userId = FirebaseAuth.instance.currentUser!.uid;
+
+          final url =
+              'https://timewall.io/users/login?oid=46cff4aeda4bee27&uid=$userId';
+
+          await launchUrl(
+            Uri.parse(url),
+            mode: LaunchMode.externalApplication,
+          );
 
           return;
         }

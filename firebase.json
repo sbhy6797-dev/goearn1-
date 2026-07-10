@@ -21,6 +21,13 @@
         }
       },
       {
+        "source": "/aoyco",
+        "function": {
+          "functionId": "aoycoPostback",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

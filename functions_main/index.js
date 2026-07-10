@@ -792,7 +792,7 @@ exports.cpagripPostback = onRequest(async (req, res) => {
       return res.status(400).send("INVALID PAYOUT");
     }
 
-    const coins = Math.floor(payout * 10);
+    const coins = Math.floor(payout * 5000);
 
     const userRef = admin.firestore().collection("users").doc(userId);
 
@@ -848,7 +848,7 @@ exports.offerwallXPostback = onRequest(async (req, res) => {
     }
 
     const reward = parseFloat(String(rewardRaw).trim());
-    const coins = Math.round(reward * 100);
+    const coins = Math.round(reward * 10);
 
     const docRef = admin.firestore().collection("offerwall_logs").doc(transId);
 
@@ -890,73 +890,527 @@ exports.offerwallXPostback = onRequest(async (req, res) => {
 
 
 
+const MODE = "LIVE";
 
-
-exports.ccxuaPostback = onRequest(async (req, res) => {
+exports.timewallPostback = onRequest(async (req, res) => {
   try {
-    const data = req.query || req.body;
 
-    console.log("🔥 CCXUA POSTBACK:", data);
+    const userId = req.query.user;
+    const amount = Number(req.query.currencyAmount || req.query.amount || 0);
+    const tx = req.query.tx;
+    const hash = req.query.hash;
 
-    const userId = (data.subId || "").trim();
-    const transId = (data.transId || "").trim();
-    const reward = Number(data.reward || 0);
-    const status = Number(data.status || 1);
-    const signature = data.signature;
-
-    const secret = "YOUR_CCXUA_SECRET"; // من لوحة c.cx.ua
-
-    // ❌ validation
-    if (!userId || !transId) {
-      return res.status(200).send("OK");
+    if (!userId || !tx) {
+      return res.status(400).send("Missing params");
     }
-
-    // 🔐 verify signature
-    const crypto = require("crypto");
-    const expected = crypto
-      .createHash("md5")
-      .update(userId + transId + reward + secret)
-      .digest("hex");
-
-    if (signature && signature !== expected) {
-      console.log("❌ INVALID SIGNATURE");
-      return res.status(403).send("FORBIDDEN");
-    }
-
-    // 🔒 prevent duplicates
-    const logRef = admin.firestore()
-      .collection("ccxua_logs")
-      .doc(transId);
-
-    if ((await logRef.get()).exists) {
-      return res.status(200).send("DUP");
-    }
-
-    let coins = Math.floor(reward * 1000); // عدّلها حسب نظامك
-
-    if (status === 2) coins = -coins;
 
     const userRef = admin.firestore().collection("users").doc(userId);
+    const logRef = admin.firestore().collection("timewall_tx").doc(tx);
 
-    await userRef.set({
-      totalCoins: admin.firestore.FieldValue.increment(coins),
-      ccxuaEarnings: admin.firestore.FieldValue.increment(reward),
-      lastUpdate: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+    // ===================== TEST MODE =====================
+    if (MODE === "TEST") {
+
+      console.log("🧪 TEST MODE ACTIVE");
+
+      // منع التكرار حتى في الاختبار
+      if ((await logRef.get()).exists) {
+        return res.status(200).send("DUPLICATE TEST");
+      }
+
+      await admin.firestore().runTransaction(async (t) => {
+        t.set(userRef, {
+          totalCoins: admin.firestore.FieldValue.increment(amount),
+        }, { merge: true });
+      });
+
+      await logRef.set({
+        userId,
+        tx,
+        amount,
+        mode: "test",
+        time: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      return res.status(200).send("OK TEST MODE");
+    }
+
+    // ===================== LIVE MODE =====================
+    if (!hash) {
+      return res.status(400).send("Missing hash");
+    }
+
+    const expectedHash = crypto
+      .createHash("sha256")
+      .update(userId + amount + tx + SECRET)
+      .digest("hex");
+
+    if (hash !== expectedHash) {
+      await admin.firestore().collection("timewall_logs").add({
+        type: "invalid_hash",
+        userId,
+        tx,
+        amount,
+        receivedHash: hash,
+        time: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      return res.status(403).send("Invalid hash");
+    }
+
+    // منع التكرار
+    if ((await logRef.get()).exists) {
+      return res.status(200).send("DUPLICATE");
+    }
+
+    await admin.firestore().runTransaction(async (t) => {
+      t.set(userRef, {
+        totalCoins: admin.firestore.FieldValue.increment(amount),
+      }, { merge: true });
+    });
 
     await logRef.set({
       userId,
-      transId,
-      reward,
-      coins,
-      status,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      tx,
+      amount,
+      mode: "live",
+      time: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    return res.status(200).send("ok");
+    return res.status(200).send("OK");
 
   } catch (e) {
-    console.error("❌ CCXUA ERROR:", e);
+    console.error(e);
+
+    await admin.firestore().collection("timewall_logs").add({
+      type: "error",
+      message: e.message,
+      time: admin.firestore.FieldValue.serverTimestamp()
+    });
+
     return res.status(500).send("error");
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+exports.aoycoPostback = onRequest(
+  { region: "us-central1", invoker: "public" },
+  async (req, res) => {
+    try {
+      const data = req.method === "POST" ? req.body : req.query;
+
+      console.log("🔥 AOYCO POSTBACK:", data);
+
+      const userId = String(data.subId || "").trim();
+      const transId = String(data.transId || "").trim();
+      const rewardRaw = data.reward ?? "0";
+      const status = Number(data.status || 1);
+      const signature = String(data.signature || "").trim();
+
+      const secret = "YOUR_SECRET_HERE";
+
+      if (!userId || !transId) {
+        return res.status(400).send("INVALID DATA");
+      }
+
+      const reward = String(Number(rewardRaw));
+
+      const baseString = userId + transId + reward + secret;
+
+      const expectedSignature = crypto
+        .createHash("md5")
+        .update(baseString)
+        .digest("hex");
+
+      if (signature !== expectedSignature) {
+        console.log("❌ BAD SIGNATURE");
+        return res.status(403).send("FORBIDDEN");
+      }
+
+      console.log("✅ SIGNATURE OK");
+
+      // منع تكرار نفس العملية
+      const logRef = admin.firestore()
+        .collection("aoyco_logs")
+        .doc(transId);
+
+      if ((await logRef.get()).exists) {
+        console.log("⚠️ Duplicate transaction");
+        return res.status(200).send("ok");
+      }
+
+      // 1$ = 10000 Coins
+      const coins = Math.floor(Number(reward) * 2500);
+
+      // إضافة العملات للمستخدم
+      await admin.firestore()
+        .collection("users")
+        .doc(userId)
+        .set({
+          totalCoins: admin.firestore.FieldValue.increment(coins),
+          lastUpdate: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+
+      // حفظ اللوج
+      await logRef.set({
+        userId,
+        transId,
+        reward: Number(reward),
+        coins,
+        status,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      console.log(`✅ ${coins} coins added to ${userId}`);
+
+      return res.status(200).send("ok");
+
+    } catch (e) {
+      console.error("❌ ERROR:", e);
+      return res.status(500).send("error");
+    }
+  }
+);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+exports.mobiVortexPostback = onRequest(async (req, res) => {
+  try {
+
+    const data = req.query;
+
+    console.log("🔥 MOBIVORTEX POSTBACK:", data);
+
+    const userId = String(data.identity_id || "").trim();
+    const txid = String(data.txid || "").trim();
+
+    const payout = Number(data.payout || 0);
+    const points = Number(data.points || 0);
+    const result = String(data.result || "");
+
+    if (!userId || !txid) {
+      return res.status(200).send("OK");
+    }
+
+
+    const logRef = admin.firestore()
+      .collection("mobivortex_logs")
+      .doc(txid);
+
+
+    // منع التكرار
+    const logSnap = await logRef.get();
+
+    if (logSnap.exists) {
+      return res.status(200).send("OK");
+    }
+
+
+    // لو العرض مرفوض
+    if (result === "rejected") {
+
+      await logRef.set({
+        userId,
+        txid,
+        result,
+        payout,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      return res.status(200).send("OK");
+    }
+
+
+    // التحويل للعملات
+    const coins = Math.floor(payout * 5000);
+
+
+    await admin.firestore()
+      .collection("users")
+      .doc(userId)
+      .set({
+
+        totalCoins:
+          admin.firestore.FieldValue.increment(coins),
+
+        lastUpdate:
+          admin.firestore.FieldValue.serverTimestamp()
+
+      }, { merge:true });
+
+
+
+    await logRef.set({
+
+      userId,
+      txid,
+      payout,
+      points,
+      coins,
+      result,
+
+      createdAt:
+        admin.firestore.FieldValue.serverTimestamp()
+
+    });
+
+
+    console.log("✅ MOBIVORTEX COINS:", coins);
+
+
+    return res.status(200).send("OK");
+
+
+  } catch(e) {
+
+    console.error("❌ MOBIVORTEX ERROR:", e);
+
+    return res.status(500).send("ERROR");
+
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+exports.rapidoreachPostback = onRequest(async (req, res) => {
+  try {
+
+    console.log("🔥 RAPIDOREACH:", req.query);
+
+    let userId =
+      req.query.endUserId ||
+      req.query.userId;
+
+    if (userId && userId.includes("-")) {
+      userId = userId.split("-")[0];
+    }
+
+    const currencyAmt = Number(
+      req.query.currencyAmt || 0
+    );
+
+    const transactionId =
+      req.query.transactionId;
+
+    const status =
+      req.query.status;
+
+    if (!userId || !transactionId) {
+      return res.status(200).send("0");
+    }
+
+    // فقط المكتمل
+    if (status !== "C") {
+      return res.status(200).send("1");
+    }
+
+    const coins = Math.floor(currencyAmt * 5);
+
+    const logRef = admin.firestore()
+      .collection("rapidoreach_logs")
+      .doc(transactionId);
+
+    if ((await logRef.get()).exists) {
+      return res.status(200).send("1");
+    }
+
+    await admin.firestore()
+      .collection("users")
+      .doc(userId)
+      .set({
+        totalCoins:
+          admin.firestore.FieldValue.increment(coins),
+
+        lastUpdate:
+          admin.firestore.FieldValue.serverTimestamp(),
+
+      }, {merge:true});
+
+
+    await logRef.set({
+      userId,
+      transactionId,
+      currencyAmt,
+      coins,
+      status,
+      createdAt:
+        admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+
+    console.log("✅ ADDED:", coins);
+
+    return res.status(200).send("1");
+
+
+  } catch(e){
+
+    console.error(e);
+    return res.status(200).send("0");
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+exports.tplayadPostback = onRequest(async (req, res) => {
+  try {
+    console.log("TPLAYAD POSTBACK:", req.query);
+
+    const {
+      subId,
+      transId,
+      reward,
+      payout,
+      signature,
+      status,
+      campaign_id,
+      company_id,
+      uuid,
+      userIp,
+      country,
+      offer_name,
+    } = req.query;
+
+    const secret = "Qq2Pb6Vh7Ei5Sx1";
+
+    // تحقق من البيانات الأساسية
+    if (!subId || !transId || reward === undefined || !signature) {
+      return res.status(400).send("ERROR");
+    }
+
+    // Verify Signature
+    const expected = crypto
+      .createHash("md5")
+      .update(`${subId}${transId}${reward}${secret}`)
+      .digest("hex");
+
+    if (expected !== signature) {
+      console.log("❌ Invalid Signature");
+      return res.status(403).send("ERROR");
+    }
+
+    const db = admin.firestore();
+
+    const txRef = db
+      .collection("tplayad_transactions")
+      .doc(String(transId));
+
+    // منع التكرار
+    if ((await txRef.get()).exists) {
+      return res.status(200).send("DUP");
+    }
+
+    const userRef = db.collection("users").doc(String(subId));
+
+    const rewardValue = Math.floor(Number(payout || 0) * 5000);
+
+    await db.runTransaction(async (transaction) => {
+
+      const userSnap = await transaction.get(userRef);
+
+      if (!userSnap.exists) {
+        throw new Error("User not found");
+      }
+
+      let totalCoins = Number(userSnap.data().totalCoins || 0);
+
+      if (String(status) === "1") {
+        totalCoins += rewardValue;
+      } else if (String(status) === "2") {
+        totalCoins = Math.max(0, totalCoins - rewardValue);
+      }
+
+      transaction.update(userRef, {
+        totalCoins,
+        lastUpdate: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      const txData = {
+        uid: subId,
+        reward: rewardValue,
+        payout: Number(payout || 0),
+        status: Number(status),
+        uuid: uuid || null,
+        userIp: userIp || null,
+        country: country || null,
+        offerName: offer_name || null,
+        campaignId: campaign_id || company_id || null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      transaction.set(txRef, txData);
+
+    });
+
+    return res.status(200).send("OK");
+
+  } catch (e) {
+    console.error("TPLAYAD ERROR:", e);
+    return res.status(500).send("ERROR");
   }
 });
