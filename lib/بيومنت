@@ -1,199 +1,749 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:pedometer/pedometer.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'firebase_options.dart';
+import 'login_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'withdraw_screen.dart';
-class PaymentScreen extends StatefulWidget {
-  const PaymentScreen({super.key});
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:in_app_update/in_app_update.dart';
 
-  @override
-  State<PaymentScreen> createState() => _PaymentScreenState();
-}
+// ================= GLOBAL =================
 
-class _PaymentScreenState extends State<PaymentScreen> {
-  int totalCoins = 0;
+final navigatorKey = GlobalKey<NavigatorState>();
+late FirebaseAnalytics analytics;
+final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<void>>();
 
-  DocumentReference? getUserDoc() {
-    final id = FirebaseAuth.instance.currentUser?.uid;
-    if (id == null) return null;
 
-    return FirebaseFirestore.instance.collection('users').doc(id);
+bool isValidStepJump(int stepJump, DateTime now, DateTime? lastTime) {
+  if (stepJump < 0) return false;
+
+  if (stepJump > 150) return false;
+
+
+  if (lastTime != null) {
+    final seconds = now.difference(lastTime).inSeconds;
+    if (seconds < 1 && stepJump > 20) return false;
   }
 
-  BannerAd? _bannerAd;
+  return true;
+}
 
-  final List<Map<String, dynamic>> payments = [
-    {"type": "paypal", "amount": 6, "coins": 90000, "image": "assets/images/paypal.png", "currency": "\$"},
-    {"type": "paypal", "amount": 4, "coins": 70000, "image": "assets/images/paypal.png", "currency": "\$"},
-    {"type": "paypal", "amount": 2, "coins": 50, "image": "assets/images/paypal.png", "currency": "\$"},
-    {"type": "fawry", "amount": 200, "coins": 90000, "image": "assets/images/fawry.png", "currency": "ج"},
-    {"type": "fawry", "amount": 150, "coins": 70000, "image": "assets/images/fawry.png", "currency": "ج"},
-    {"type": "fawry", "amount": 100, "coins": 50000, "image": "assets/images/fawry.png", "currency": "ج"},
-    {"type": "vodafone", "amount": 200, "coins": 90000, "image": "assets/images/vodafone.png", "currency": "ج"},
-    {"type": "vodafone", "amount": 150, "coins": 70000, "image": "assets/images/vodafone.png", "currency": "ج"},
-    {"type": "vodafone", "amount": 100, "coins": 50, "image": "assets/images/vodafone.png", "currency": "ج"},
-  ];
+int stepsToday = 0;
+int? _startSteps;
+
+bool userAcceptedTracking = false;
+bool _permissionRequestRunning = false;
+
+
+Future<void> loadTrackingSetting() async {
+  final prefs = await SharedPreferences.getInstance();
+  userAcceptedTracking = prefs.getBool('tracking') ?? false;
+}
+
+Future<void> saveTrackingSetting(bool value) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setBool('tracking', value);
+}
+
+// ================= CRASHLYTICS =================
+
+void setupCrashlytics() {
+  FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+  PlatformDispatcher.instance.onError = (error, stack) {
+    FirebaseCrashlytics.instance.recordError(
+      error,
+      stack,
+      fatal: true,
+    );
+    return true;
+  };
+}
+
+// ================= UMP (SAFE VERSION) =================
+
+Future<bool> initConsentFormSafe() async {
+  try {
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    final params = ConsentRequestParameters();
+    final completer = Completer<bool>();
+
+    ConsentInformation.instance.requestConsentInfoUpdate(
+      params,
+          () async {
+        try {
+          final available =
+          await ConsentInformation.instance.isConsentFormAvailable();
+
+          if (!available) {
+            completer.complete(
+              await ConsentInformation.instance.canRequestAds(),
+            );
+            return;
+          }
+
+          ConsentForm.loadAndShowConsentFormIfRequired(
+                (formError) async {
+              if (formError != null) {
+                debugPrint("UMP form error: ${formError.message}");
+                completer.complete(false);
+                return;
+              }
+
+              final canRequest =
+              await ConsentInformation.instance.canRequestAds();
+
+              completer.complete(canRequest);
+            },
+          );
+        } catch (e) {
+          debugPrint("UMP inner error: $e");
+          completer.complete(false);
+        }
+      },
+          (error) {
+        debugPrint("UMP update error: ${error.message}");
+        completer.complete(false);
+      },
+    );
+
+    return completer.future;
+  } catch (e) {
+    debugPrint("UMP crash safe: $e");
+    return false;
+  }
+}
+
+// ================= BACKGROUND FCM =================
+
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  try {
+    final notification = message.notification;
+    if (notification == null) return;
+
+    debugPrint("BG message: ${notification.title}");
+  } catch (e) {
+    debugPrint("BG handler error: $e");
+  }
+}
+
+// ================= MAIN =================
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  setupCrashlytics();
+
+
+
+  FirebaseMessaging.onBackgroundMessage(
+    firebaseMessagingBackgroundHandler,
+  );
+
+  runApp(const MyApp());
+}
+
+// ================= PERMISSIONS =================
+
+
+Future<void> requestPermissions(BuildContext context) async {
+
+  if (_permissionRequestRunning) return;
+
+  _permissionRequestRunning = true;
+
+  try {
+
+    final allowActivity = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text("Step Tracking Permission"),
+        content: const Text(
+          "We use activity recognition permission to count your steps and track your daily movement.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text("No Thanks"),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text("Allow"),
+          ),
+        ],
+      ),
+    );
+
+    if (allowActivity != true) return;
+
+    await Permission.activityRecognition.request();
+
+  } catch (e) {
+    debugPrint("Permission error: $e");
+  } finally {
+    _permissionRequestRunning = false;
+  }
+}
+
+Future<bool> askTrackingPermission() async {
+  final context = navigatorKey.currentContext;
+  if (context == null) return false;
+
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text("Data Usage"),
+      content: const Text(
+        "We collect your step count, device information, and app usage data to improve app performance and user experience. This data may be shared with third-party services such as Google Analytics and Firebase. No personally identifiable information is sold or shared.",
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text("no"),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: const Text("yes"),
+        ),
+      ],
+    ),
+  );
+
+  userAcceptedTracking = result ?? false;
+
+  await saveTrackingSetting(userAcceptedTracking);
+
+  await FirebaseAnalytics.instance
+      .setAnalyticsCollectionEnabled(userAcceptedTracking);
+
+  return userAcceptedTracking;
+}
+
+// ================= APP =================
+
+class MyApp extends StatefulWidget {
+  const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+
+
+class _MyAppState extends State<MyApp> {
+
+  Future<void> checkForUpdate() async {
+    try {
+      final info = await InAppUpdate.checkForUpdate();
+
+      if (info.updateAvailability == UpdateAvailability.updateAvailable) {
+
+
+        if (info.immediateUpdateAllowed == true) {
+          await InAppUpdate.performImmediateUpdate();
+        } else {
+          debugPrint("Immediate update not allowed");
+        }
+      }
+
+    } catch (e) {
+
+      debugPrint("Update check failed: $e");
+    }
+  }
+
+
+  void showUpdateDialog() {
+    showDialog(
+      context: navigatorKey.currentContext!,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text("تحديث مطلوب"),
+        content: const Text("لازم تحدث التطبيق عشان تقدر تكمل."),
+        actions: [
+          TextButton(
+            onPressed: () {
+              launchUrl(
+                Uri.parse(
+                    "https://play.google.com/store/apps/details?id=com.goearn.goearn1"
+                ),
+                mode: LaunchMode.externalApplication,
+              );
+            },
+            child: const Text("تحديث"),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+
+
+  Timer? _stepTimer;
+  Timer? _permissionTimer;
+
+
+  Timer? _firestoreTimer;
+  StreamSubscription<String>? _tokenSub;
+
+  bool _fcmListenerAdded = false;
+
+  Future<void> initializeServices() async {
+
+    await FirebaseAppCheck.instance.activate(
+      androidProvider: AndroidProvider.playIntegrity,
+    );
+
+    final prefs = await SharedPreferences.getInstance();
+    userAcceptedTracking = prefs.getBool('tracking') ?? false;
+
+    await FirebaseAnalytics.instance
+        .setAnalyticsCollectionEnabled(userAcceptedTracking);
+
+    await FirebaseCrashlytics.instance
+        .setCrashlyticsCollectionEnabled(true);
+
+    await MobileAds.instance.updateRequestConfiguration(
+      RequestConfiguration(
+        tagForChildDirectedTreatment: TagForChildDirectedTreatment.unspecified,
+        tagForUnderAgeOfConsent: TagForUnderAgeOfConsent.unspecified,
+        maxAdContentRating: MaxAdContentRating.g,
+      ),
+    );
+  }
+
+
+  bool isStepAvailable = true;
+
+  Future<bool> hasSeenPermissionDialogs() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('seen_permission_dialogs') ?? false;
+  }
+
+  Future<void> setSeenPermissionDialogs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('seen_permission_dialogs', true);
+  }
+
+
+  bool _fcmInitialized = false;
+  bool _fcmTokenSaved = false;
+
+
+  late StreamSubscription<User?> _authSub;
+  StreamSubscription<RemoteMessage>? _fcmSub;
+
+
+  void initFCMListener() {
+    if (_fcmListenerAdded) return;
+    _fcmListenerAdded = true;
+
+    _fcmSub = FirebaseMessaging.onMessage.listen((message) async {
+
+      try {
+        final notification = message.notification;
+        if (notification == null) return;
+
+        final currentUser = FirebaseAuth.instance.currentUser;
+        if (currentUser == null) {
+          debugPrint("No user logged in");
+          return;
+        }
+
+        final uid = currentUser.uid;
+        final title = notification.title ?? "Notification";
+        final body = notification.body ?? "";
+        await _saveNotification(uid, title, body);
+        final snapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('notifications')
+            .orderBy('createdAt', descending: true)
+            .limit(50)
+            .get();
+
+        if (snapshot.docs.length > 40) {
+          Future.microtask(() async {
+            for (var doc in snapshot.docs.skip(30)) {
+              await doc.reference.delete();
+            }
+          });
+        }
+
+      } catch (e, stack) {
+        debugPrint("FCM error: $e");
+
+        await FirebaseCrashlytics.instance.recordError(
+          e,
+          stack,
+          fatal: false,
+        );
+      }
+    });
+  }
+
+  Future<void> _saveNotification(String uid, String title, String body) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('notifications')
+          .add({
+        'title': title,
+        'body': body,
+        'createdAt': FieldValue.serverTimestamp(),
+        'read': false,
+      });
+    } catch (e, stack) {
+      debugPrint("Firestore error: $e");
+
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        fatal: false,
+      );
+    }
+  }
+
+  Future<void> startPermissionFlow() async {
+    final seen = await hasSeenPermissionDialogs();
+    if (seen) return;
+
+    final tracking = await askTrackingPermission();
+
+    if (tracking) {
+      await requestPermissions(navigatorKey.currentContext!);
+    }
+
+    await setSeenPermissionDialogs();
+  }
+
+
+  StreamSubscription<StepCount>? _stepSub;
+  bool _started = false;
+  int _lastRawSteps = 0;
+  DateTime? _lastStepTime;
+
+  DateTime? _lastSave;
+  int _lastSavedSteps = 0;
+
+  void _listenSteps() async {
+
+    if (!isStepAvailable) {
+      debugPrint("Step counter not supported on this device");
+      return;
+    }
+
+    final status = await Permission.activityRecognition.status;
+
+    if (!status.isGranted) {
+      debugPrint("Permission not granted");
+      return;
+    }
+
+    try {
+      // ✅ مهم: تأخير تشغيل sensor لتخفيف الضغط
+      await Future.delayed(const Duration(seconds: 1));
+
+      _stepSub = Pedometer.stepCountStream.listen(
+            (event) {
+          _handleStep(event);
+        },
+
+        onError: (error) async {
+          debugPrint("STEP ERROR: $error");
+          isStepAvailable = false;
+
+          await _stepSub?.cancel();
+
+          await FirebaseCrashlytics.instance.recordError(
+            error,
+            null,
+            fatal: false,
+          );
+        },
+
+        cancelOnError: true,
+      );
+
+    } catch (e, stack) {
+      debugPrint("Pedometer init error: $e");
+
+      isStepAvailable = false;
+
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        fatal: false,
+      );
+    }
+  }
+
+
+  Future<void> _loadSteps(User? user) async {
+    if (user == null) return;
+
+    try {
+      final docRef = FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid);
+
+      final doc = await docRef.get();
+
+      if (!doc.exists) {
+        debugPrint("User doc not found");
+        return;
+      }
+
+      final data = doc.data();
+
+      if (data == null) return;
+
+      stepsToday = (data['steps'] as num?)?.toInt() ?? 0;
+      _startSteps = (data['initialSteps'] as num?)?.toInt() ?? 0;
+
+      debugPrint("LOADED stepsToday = $stepsToday");
+      debugPrint("LOADED startSteps = $_startSteps");
+
+    } catch (e, stack) {
+      debugPrint("Load steps error: $e");
+
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        fatal: false,
+      );
+    }
+  }
+
 
   @override
   void initState() {
     super.initState();
-    _loadUserCoins();
-    _loadBannerAd();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      checkForUpdate();
+    });
+
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) async {
+      if (!mounted || user == null) return;
+
+      await _initFCM();
+      await _loadSteps(user);
+
+      Future.delayed(const Duration(seconds: 2), () {
+        _start(user);
+      });
+    });
   }
 
-  Future<void> _loadUserCoins() async {
-    final docRef = getUserDoc();
-    if (docRef == null) return;
+
+  Future<void> _initFCM() async {
+    if (_fcmInitialized) return;
+    _fcmInitialized = true;
 
     try {
-      final snapshot = await docRef.get();
+      await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
 
-      if (!mounted) return;
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
 
-      if (!snapshot.exists || snapshot.data() == null) {
-        setState(() {
-          totalCoins = 0;
-        });
-        return;
+      final uid = user.uid;
+
+      final token = await FirebaseMessaging.instance.getToken();
+
+      if (token != null && !_fcmTokenSaved) {
+        _fcmTokenSaved = true;
+
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .set({
+          'fcmToken': token,
+          'lastTokenUpdate': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
       }
 
-      final data = snapshot.data() as Map<String, dynamic>;
+      // 🟢 safe single listener
+      _tokenSub ??= FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+        final currentUser = FirebaseAuth.instance.currentUser;
+        if (currentUser == null) return;
 
-      if (!mounted) return;
-
-      setState(() {
-        totalCoins = data['totalCoins'] ?? 0;
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .set({
+          'fcmToken': newToken,
+          'lastTokenUpdate': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
       });
 
     } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        totalCoins = 0;
-      });
+      debugPrint("FCM ERROR: $e");
     }
   }
 
-  void _loadBannerAd() {
-    _bannerAd?.dispose();
 
-    _bannerAd = BannerAd(
-      adUnitId: 'ca-app-pub-5925712456846655/9667012771',
-      size: AdSize.banner,
-      request: const AdRequest(),
-      listener: BannerAdListener(
-        onAdLoaded: (ad) {
-          if (!mounted) return;
-          setState(() {
-            _bannerAd = ad as BannerAd;
-          });
-        },
+  DateTime? _lastUiUpdate;
+  Timer? _syncTimer;
+  Map<String, dynamic>? _pendingStepData;
 
-        onAdFailedToLoad: (ad, error) {
-          ad.dispose();
+  void _handleStep(StepCount event) {
+    _startSteps ??= event.steps;
+    final now = DateTime.now();
 
-          Future.delayed(const Duration(seconds: 10), () {
-            if (mounted) _loadBannerAd();
-          });
-        },
-      ),
-    );
+    final rawSteps = event.steps;
 
-    _bannerAd!.load();
-  }
+    // 🔴 reset detection
+    if (rawSteps < _lastRawSteps) {
+      final diffReset = _lastRawSteps - rawSteps;
 
-  void handleWithdraw(Map<String, dynamic> item) async {
-    if (totalCoins < item["coins"]) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Your balance is insufficient. Earn more coins'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (diffReset > 1000) {
+        _startSteps = rawSteps;
+      }
+
+      _lastRawSteps = rawSteps;
       return;
     }
 
-    final result = await Navigator.push<int>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => WithdrawScreen(
-          type: item["type"],
-          amount: item["amount"],
-          coins: item["coins"],
-          minWithdraw: 100,
-        ),
-      ),
-    );
+    final stepJump = rawSteps - _lastRawSteps;
 
-    if (result != null) {
-      await _loadUserCoins();
+    if (!isValidStepJump(stepJump, now, _lastStepTime)) return;
+    if (stepJump > 250) return;
+
+    _lastRawSteps = rawSteps;
+    _lastStepTime = now;
+
+    final start = _startSteps ?? rawSteps;
+    final diff = (rawSteps - start).clamp(0, 200000);
+
+    // =========================
+    // UI UPDATE (throttled)
+    // =========================
+    if (_lastUiUpdate == null ||
+        now.difference(_lastUiUpdate!) > const Duration(seconds: 1)) {
+      _lastUiUpdate = now;
+
+      if (mounted) {
+        setState(() {
+          stepsToday = diff;
+        });
+      }
     }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // =========================
+    // SAVE THROTTLE
+    // =========================
+    final shouldSave =
+        _lastSave == null ||
+            now.difference(_lastSave!) > const Duration(minutes: 5) ||
+            (stepsToday - _lastSavedSteps).abs() > 500;
+
+    if (!shouldSave) return;
+
+    _lastSave = now;
+    _lastSavedSteps = stepsToday;
+
+    _pendingStepData = {
+      'steps': stepsToday,
+      'initialSteps': _startSteps ?? rawSteps,
+      'lastUpdated': FieldValue.serverTimestamp(),
+    };
+
+    // =========================
+    // SINGLE SYNC TIMER (NO CHAOS)
+    // =========================
+    if (_syncTimer?.isActive == true) return;
+
+    _syncTimer = Timer(const Duration(seconds: 20), () async {
+      try {
+        final currentUser = FirebaseAuth.instance.currentUser;
+        if (currentUser == null || _pendingStepData == null) return;
+
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(currentUser.uid)
+            .set(_pendingStepData!, SetOptions(merge: true))
+            .timeout(const Duration(seconds: 10));
+
+      } catch (e) {
+        debugPrint("Step sync error: $e");
+      }
+    });
+  }
+
+
+
+  Future<void> _start(User user) async {
+    if (_started) return;
+    _started = true;
+
+    await loadTrackingSetting();
+
+
+    initFCMListener();
+
+    if (userAcceptedTracking) {
+      _stepTimer = Timer(const Duration(seconds: 2), () {
+        if (mounted && userAcceptedTracking) {
+          _listenSteps();
+        }
+      });
+    }
+
+    _permissionTimer = Timer(const Duration(seconds: 5), () async {
+      try {
+        if (!mounted) return;
+        await startPermissionFlow();
+      } catch (e, stack) {
+        FirebaseCrashlytics.instance.recordError(e, stack, fatal: false);
+      }
+    });
   }
 
   @override
   void dispose() {
-    _bannerAd?.dispose();
+    _fcmSub?.cancel();
+    _authSub.cancel();
+    _stepSub?.cancel();
+    _stepTimer?.cancel();
+    _permissionTimer?.cancel();
+    _firestoreTimer?.cancel();
+
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xff2EF1F7),
-      body: Column(
-        children: [
-          const SizedBox(height: 40),
-          Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: payments.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                mainAxisSpacing: 16,
-                crossAxisSpacing: 16,
-                childAspectRatio: 0.7,
-              ),
-              itemBuilder: (context, index) {
-                final item = payments[index];
-                return GestureDetector(
-                  onTap: () => handleWithdraw(item),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Image.asset(item["image"], width: 45),
-                        const SizedBox(height: 8),
-                        Text("${item["amount"]} ${item["currency"]}",
-                            style: const TextStyle(fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 4),
-                        Text("${item["coins"]}",
-                            style: const TextStyle(color: Colors.orange)),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          if (_bannerAd != null)
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 40),
-                child: SizedBox(
-                  height: _bannerAd!.size.height.toDouble(),
-                  width: _bannerAd!.size.width.toDouble(),
-                  child: AdWidget(ad: _bannerAd!),
-                ),
-              ),
-            )
-        ],
-      ),
-
+    return MaterialApp(
+      navigatorKey: navigatorKey,
+      debugShowCheckedModeBanner: false,
+      home: const LoginPage(),
     );
   }
 }

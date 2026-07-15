@@ -1414,3 +1414,159 @@ exports.tplayadPostback = onRequest(async (req, res) => {
     return res.status(500).send("ERROR");
   }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+exports.offerwallMediaPostback = onRequest(async (req, res) => {
+  try {
+
+    const db = admin.firestore();
+
+    let data = {};
+
+    // POST FORM DATA
+    if (req.method === "POST") {
+
+      const busboy = Busboy({
+        headers: req.headers
+      });
+
+      busboy.on("field", (key, value) => {
+        data[key] = value;
+      });
+
+      await new Promise((resolve, reject) => {
+
+        busboy.on("finish", resolve);
+        busboy.on("error", reject);
+
+        busboy.end(req.rawBody);
+
+      });
+
+    } else {
+
+      data = req.query;
+
+    }
+
+
+    console.log("🔥 OFFERWALLMEDIA DATA:", data);
+
+
+    const subId = String(data.subId || "").trim();
+    const transId = String(data.transId || "").trim();
+
+    const reward = Number(data.reward || 0);
+    const payout = Number(data.payout || 0);
+    const status = Number(data.status || 1);
+
+
+    if (!subId || !transId) {
+      console.log("❌ Missing:", {
+        subId,
+        transId
+      });
+
+      return res.status(400).send("INVALID");
+    }
+
+
+    const logRef = db
+      .collection("offerwallmedia_logs")
+      .doc(transId);
+
+
+    if ((await logRef.get()).exists) {
+      return res.status(200).send("DUPLICATE");
+    }
+
+
+    // 1$ = 1000 Coins
+    const coins = Math.floor(payout * 5000);
+
+
+    const userRef = db
+      .collection("users")
+      .doc(subId);
+
+
+    await userRef.set({
+
+      totalCoins:
+        admin.firestore.FieldValue.increment(
+          status === 1 ? coins : -coins
+        ),
+
+      lastUpdate:
+        admin.firestore.FieldValue.serverTimestamp()
+
+    }, {merge:true});
+
+
+
+    await logRef.set({
+
+      userId: subId,
+      transId,
+      reward,
+      payout,
+      coins,
+      status,
+
+      offerName: data.offer_name || "",
+      offerType: data.offer_type || "",
+
+      createdAt:
+        admin.firestore.FieldValue.serverTimestamp()
+
+    });
+
+
+    console.log("✅ OFFERWALLMEDIA SUCCESS:", {
+      subId,
+      coins
+    });
+
+
+    return res.status(200).send("OK");
+
+
+  } catch(e){
+
+    console.error("❌ OFFERWALLMEDIA ERROR:", e);
+
+    return res.status(500).send("ERROR");
+
+  }
+});

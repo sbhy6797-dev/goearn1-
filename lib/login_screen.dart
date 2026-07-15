@@ -76,7 +76,8 @@ class _LoginPageState extends State<LoginPage> {
 
     } on FirebaseAuthException catch (e, stack) {
 
-      if (e.code != 'network-request-failed') {
+      if (e.code != 'network-request-failed' &&
+          e.code != 'unknown') {
         await FirebaseCrashlytics.instance.recordError(
           e,
           stack,

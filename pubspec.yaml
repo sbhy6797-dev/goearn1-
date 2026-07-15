@@ -2,7 +2,7 @@ name: goearn1
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.0.0+14
+version: 1.0.0+15
 
 environment:
   sdk: ^3.10.4
@@ -31,6 +31,7 @@ dependencies:
   firebase_app_check: ^0.3.0
   in_app_update: ^4.2.3
   rapidoreach: ^1.1.0
+  package_info_plus: ^8.0.0
 
   # Google Sign-In (مهم جدًا)
   google_sign_in: ^6.3.0

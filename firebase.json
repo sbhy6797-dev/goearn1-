@@ -28,6 +28,13 @@
         }
       },
       {
+        "source": "/offerwallmedia",
+        "function": {
+          "functionId": "offerwallMediaPostback",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

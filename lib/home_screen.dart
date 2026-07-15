@@ -378,7 +378,6 @@ class _HomeScreenState
       );
 
     } on TimeoutException {
-      // ❌ مش كراش → رسالة فقط
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Connection is slow, try again'),
@@ -387,24 +386,34 @@ class _HomeScreenState
       );
 
     } catch (e, stack) {
-      debugPrint(e.toString());
-      debugPrint(stack.toString());
+  debugPrint(e.toString());
 
-      // ❌ متسجلش timeout كـ crash
-      if (e is! TimeoutException) {
-        await FirebaseCrashlytics.instance.recordError(e, stack);
-      }
+  final error = e.toString().toLowerCase();
 
-      if (!mounted) return;
+  if (!error.contains('network_error') &&
+  !error.contains('sign_in_failed') &&
+  !error.contains('12502') &&
+  !error.contains('cancel')) {
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Login failed'),
-          backgroundColor: Colors.red,
-        ),
-      );
+  await FirebaseCrashlytics.instance.recordError(
+  e,
+  stack,
+  reason: 'Google Sign In Failed',
+  fatal: false,
+  );
+  }
 
-    } finally {
+  if (!mounted) return;
+
+  ScaffoldMessenger.of(context).showSnackBar(
+  const SnackBar(
+  content: Text('Login failed'),
+  backgroundColor: Colors.red,
+  ),
+  );
+}
+
+    finally {
       if (mounted) {
         setState(() => _isLoading = false);
       }

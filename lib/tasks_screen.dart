@@ -7,6 +7,8 @@ import 'package:crypto/crypto.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:rapidoreach/rapidoreach.dart';
 import 'aoyco_page.dart';
+
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -70,7 +72,12 @@ final List<SurveyNetwork> networks = const [
     'https://timewall.io/users/login?oid=46cff4aeda4bee27&uid=USER_ID',
   ),
 
-
+  SurveyNetwork(
+    'offerwallmedia',
+    'Tasks & Surveys',
+    'assets/images/offerwallmedia.png',
+    'https://offerwallmedia.com/offerwall/zsqdb2mnuxlyg48glr8u2a2go9h4pg/[USER_ID]',
+  ),
 
   SurveyNetwork(
     'RapidoReach',
@@ -112,12 +119,7 @@ final List<SurveyNetwork> networks = const [
   ),
 
 
-  SurveyNetwork(
-    'TheoremReach',
-    'Surveys',
-    'assets/images/theoremreach.png',
-    'https://theoremreach.com/respondent_entry/direct?placementId=71b42ce0-8e8d-46b3-8732-e03d0918baa9',
-  ),
+
 
 
 ];
@@ -264,7 +266,6 @@ class _SurveyHomePageState extends State<SurveyHomePage> {
 
   Future<void> _initRapidoReach() async {
     final user = FirebaseAuth.instance.currentUser;
-
     if (user == null) return;
 
     try {
@@ -273,6 +274,8 @@ class _SurveyHomePageState extends State<SurveyHomePage> {
         userId: user.uid,
       );
 
+      if (!mounted) return;
+
       setState(() {
         _rrReady = true;
       });
@@ -280,6 +283,8 @@ class _SurveyHomePageState extends State<SurveyHomePage> {
       debugPrint("RapidoReach Ready");
     } catch (e) {
       debugPrint("RapidoReach Init Error: $e");
+
+      if (!mounted) return;
 
       setState(() {
         _rrReady = false;
@@ -363,7 +368,7 @@ class _SurveyHomePageState extends State<SurveyHomePage> {
               /* ================= TITLE ================= */
 
               const Text(
-                'اكمل الاستطلاعات واربح المكافآت ✨',
+                'أكمل الاستطلاعات واربح عملاتك✨',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white,
@@ -648,20 +653,23 @@ class SurveyCard extends StatelessWidget {
         }
 
 
-        // ================= TheoremReach =================
-        else if (network.name == 'TheoremReach') {
+        // ================= offerwallmedia =================
 
-          url =
-          'https://theoremreach.com/respondent_entry/direct'
-              '?api_key=2c0bb35a2a332fb33c559e24003e'
-              '&user_id=${user.uid}'
-              '&external_id=${user.uid}'
-              '&partner_user_id=${user.uid}'
-              '&transaction_id=${DateTime.now().millisecondsSinceEpoch}'
-              '&partner_id=de73338e-f29f-4cfb-9cd6-7926f258fb7d'
-              '&currency_name_plural=Coins'
-              '&currency_name_singular=Coin'
-              '&exchange_rate=100';
+
+        else if (network.name == 'offerwallmedia') {
+          final userId = FirebaseAuth.instance.currentUser!.uid;
+
+          final url =
+              'https://offerwallmedia.com/offerwall/'
+              'zsqdb2mnuxlyg48glr8u2a2go9h4pg/'
+              '$userId';
+
+          await launchUrl(
+            Uri.parse(url),
+            mode: LaunchMode.externalApplication,
+          );
+
+          return;
         }
 
 // =================    Offerwall   =================
@@ -682,7 +690,6 @@ class SurveyCard extends StatelessWidget {
 
           return;
         }
-
 
 // ================= Tplayad =================
 

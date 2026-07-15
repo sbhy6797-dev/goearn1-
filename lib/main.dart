@@ -253,18 +253,22 @@ class _MyAppState extends State<MyApp> {
     try {
       final info = await InAppUpdate.checkForUpdate();
 
-      if (info.updateAvailability == UpdateAvailability.updateAvailable) {
+      if (info.updateAvailability ==
+          UpdateAvailability.updateAvailable) {
 
+        if (info.immediateUpdateAllowed) {
 
-        if (info.immediateUpdateAllowed == true) {
           await InAppUpdate.performImmediateUpdate();
-        } else {
-          debugPrint("Immediate update not allowed");
+
+        } else if (info.flexibleUpdateAllowed) {
+
+          await InAppUpdate.startFlexibleUpdate();
+
+          await InAppUpdate.completeFlexibleUpdate();
         }
       }
 
     } catch (e) {
-
       debugPrint("Update check failed: $e");
     }
   }
@@ -287,7 +291,7 @@ class _MyAppState extends State<MyApp> {
                 mode: LaunchMode.externalApplication,
               );
             },
-            child: const Text("تحديث"),
+            child: const Text("uptade"),
           ),
         ],
       ),
