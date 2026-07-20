@@ -789,9 +789,9 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     Positioned(right: 15, child: Text('17000')),
     Positioned(bottom: 55, right: 40, child: Text('25000')),
     Positioned(bottom: 18, child: Text('30000')),
-    Positioned(bottom: 55, left: 40, child: Text('35000')),
-    Positioned(left: 15, child: Text('40000')),
-    Positioned(top: 55, left: 40, child: Text('50000')),
+    Positioned(bottom: 55, left: 40, child: Text('45000')),
+    Positioned(left: 15, child: Text('55000')),
+    Positioned(top: 55, left: 40, child: Text('70000')),
   ];
 
   List<Widget> _circleTicks() {

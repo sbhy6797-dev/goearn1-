@@ -317,7 +317,6 @@ class _HomeScreenState
           googleAuth.idToken == null) {
         throw Exception('Google tokens are missing');
       }
-
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,

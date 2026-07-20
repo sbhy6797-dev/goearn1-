@@ -79,6 +79,15 @@ final List<SurveyNetwork> networks = const [
     'https://offerwallmedia.com/offerwall/zsqdb2mnuxlyg48glr8u2a2go9h4pg/[USER_ID]',
   ),
 
+
+  SurveyNetwork(
+    'TheoremReach',
+    'Surveys',
+    'assets/images/theoremreach.png',
+    'https://theoremreach.com/respondent_entry/direct?placementId=71b42ce0-8e8d-46b3-8732-e03d0918baa9',
+  ),
+
+
   SurveyNetwork(
     'RapidoReach',
     'Offers & Surveys',
@@ -94,14 +103,6 @@ final List<SurveyNetwork> networks = const [
     'https://offerwall.me/offerwall/smovobh1aoydx367c1v9kqleqlyp78/[USER_ID]',
   ),
 
-
-
-  SurveyNetwork(
-    'tplayad',
-    'PTC + Offerwall',
-    'assets/images/tplayad.png',
-    'https://tplayad.com/offer/Ed7Bn1/[USER_ID]',
-  ),
 
   SurveyNetwork(
     'Pollmatic',
@@ -691,21 +692,20 @@ class SurveyCard extends StatelessWidget {
           return;
         }
 
-// ================= Tplayad =================
+        // ================= TheoremReach =================
+        else if (network.name == 'TheoremReach') {
 
-        else if (network.name == 'tplayad') {
-          final user = FirebaseAuth.instance.currentUser;
-          if (user == null) return;
-
-          final url =
-              'https://tplayad.com/offer/Ed7Bn1/${user.uid}';
-
-          await launchUrl(
-            Uri.parse(url),
-            mode: LaunchMode.externalApplication,
-          );
-
-          return;
+          url =
+          'https://theoremreach.com/respondent_entry/direct'
+              '?api_key=2c0bb35a2a332fb33c559e24003e'
+              '&user_id=${user.uid}'
+              '&external_id=${user.uid}'
+              '&partner_user_id=${user.uid}'
+              '&transaction_id=${DateTime.now().millisecondsSinceEpoch}'
+              '&partner_id=de73338e-f29f-4cfb-9cd6-7926f258fb7d'
+              '&currency_name_plural=Coins'
+              '&currency_name_singular=Coin'
+              '&exchange_rate=100';
         }
 
         // =================  RapidoReach =================
@@ -725,8 +725,6 @@ class SurveyCard extends StatelessWidget {
 
           return;
         }
-
-
 
 
 // ================= MobiVortex =================
