@@ -142,7 +142,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
 
       messenger.showSnackBar(
-        const SnackBar(content: Text('🎉 You got 50 coins')),
+        const SnackBar(content: Text('🎉 You got 100 coins')),
       );
 
     } on FirebaseFunctionsException catch (e) {
@@ -680,6 +680,132 @@ Agree to these Terms
       await launchUrl(url, mode: LaunchMode.externalApplication);
     }
   }
+  Future<void> _openContact(String url) async {
+    final uri = Uri.parse(url);
+
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  void _showContactDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(25),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+
+              const Icon(
+                Icons.support_agent,
+                color: Colors.green,
+                size: 55,
+              ),
+
+              const SizedBox(height: 10),
+
+              const Text(
+                "GoEarn1 Support",
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+
+              const SizedBox(height: 8),
+
+              const Text(
+                "Need help? Contact our support team.",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontSize: 14,
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              ListTile(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                tileColor: Colors.green.withValues(alpha: 0.1),
+                leading: const Icon(
+                  Icons.phone,
+                  color: Colors.green,
+                ),
+                title: const Text("WhatsApp Support"),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openContact(
+                    "https://wa.me/218921706355",
+                  );
+                },
+              ),
+
+              const SizedBox(height: 10),
+
+              ListTile(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                tileColor: Colors.blue.withValues(alpha: 0.1),
+                leading: const Icon(
+                  Icons.telegram,
+                  color: Colors.blue,
+                ),
+                title: const Text("Telegram"),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openContact(
+                    "https://t.me/goearn_walk",
+                  );
+                },
+              ),
+
+              const SizedBox(height: 10),
+
+              ListTile(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
+                ),
+
+                leading: const Icon(
+                  Icons.facebook,
+                  color: Colors.blue,
+                ),
+                title: const Text("Facebook Page"),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openContact(
+                    "https://www.facebook.com/profile.php?id=61576178115176",
+                  );
+                },
+              ),
+
+              const SizedBox(height: 15),
+
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text(
+                  "Close",
+                  style: TextStyle(
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
 
   @override
   void dispose() {
@@ -734,60 +860,71 @@ Agree to these Terms
                               ),
                             ],
                           ),
-                          Stack(
+                          Row(
                             children: [
-
                               IconButton(
                                 icon: const Icon(
-                                  Icons.notifications,
-                                  color: Colors.amber,
-                                  size: 45,
+                                  Icons.phone,
+                                  color: Colors.green,
+                                  size: 35,
                                 ),
-                                onPressed: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => const NotificationsScreen(),
-                                    ),
-                                  );
-                                },
+                                onPressed: _showContactDialog,
                               ),
 
-                              // 🔴 Badge
-                              Positioned(
-                                right: 6,
-                                top: 6,
-                                child: StreamBuilder(
-                                  stream: FirebaseFirestore.instance
-                                      .collection('users')
-                                      .doc(FirebaseAuth.instance.currentUser!.uid)
-                                      .collection('notifications')
-                                      .where('read', isEqualTo: false)
-                                      .snapshots(),
-                                  builder: (context, snapshot) {
-                                    if (!snapshot.hasData) return const SizedBox();
-
-                                    int count = snapshot.data!.docs.length;
-
-                                    if (count == 0) return const SizedBox();
-
-                                    return Container(
-                                      padding: const EdgeInsets.all(5),
-                                      decoration: const BoxDecoration(
-                                        color: Colors.red,
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: Text(
-                                        count > 9 ? "9+" : "$count",
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
+                              Stack(
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.notifications,
+                                      color: Colors.amber,
+                                      size: 45,
+                                    ),
+                                    onPressed: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => const NotificationsScreen(),
                                         ),
-                                      ),
-                                    );
-                                  },
-                                ),
+                                      );
+                                    },
+                                  ),
+
+                                  Positioned(
+                                    right: 6,
+                                    top: 6,
+                                    child: StreamBuilder<QuerySnapshot>(
+                                      stream: FirebaseFirestore.instance
+                                          .collection('users')
+                                          .doc(FirebaseAuth.instance.currentUser!.uid)
+                                          .collection('notifications')
+                                          .where('read', isEqualTo: false)
+                                          .snapshots(),
+                                      builder: (context, snapshot) {
+                                        if (!snapshot.hasData) return const SizedBox();
+
+                                        final count = snapshot.data!.docs.length;
+
+                                        if (count == 0) return const SizedBox();
+
+                                        return Container(
+                                          padding: const EdgeInsets.all(5),
+                                          decoration: const BoxDecoration(
+                                            color: Colors.red,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Text(
+                                            count > 9 ? "9+" : "$count",
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           )

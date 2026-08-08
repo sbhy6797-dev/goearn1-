@@ -299,7 +299,7 @@ class _HomeScreenState
 
       // ✅ حماية Google Sign-In من التهنيج
       final googleUser = await googleSignIn.signIn().timeout(
-        const Duration(seconds: 10),
+        const Duration(seconds: 15),
         onTimeout: () {
           throw TimeoutException("Google sign-in timeout");
         },

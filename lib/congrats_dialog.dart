@@ -5,18 +5,13 @@ import 'package:confetti/confetti.dart';
 
 class CongratulationScreen extends StatefulWidget {
   final int reward;
-  final int speed;
-  final Duration duration;
   final Function(int) onClaim;
-  final Function(int, Duration) onSpeedBoost;
 
   const CongratulationScreen({
     super.key,
     required this.reward,
-    required this.speed,
-    required this.duration,
     required this.onClaim,
-    required this.onSpeedBoost,
+
   });
 
   @override
@@ -40,20 +35,6 @@ class _CongratulationScreenState extends State<CongratulationScreen>
   late Animation<double> _scaleAnimation;
   late Animation<double> _fadeAnimation;
 
-
-
-  String getAdName(int speed) {
-    if (speed == 3) return "Ad 1";
-    if (speed == 5) return "Ad 2";
-    if (speed == 7) return "Ad 3";
-    return "Ad";
-  }
-  Color getSpeedColor(int speed) {
-    if (speed == 3) return Colors.blue;
-    if (speed == 5) return Colors.green;
-    if (speed == 7) return Colors.amber;
-    return Colors.orange;
-  }
 
   @override
   void initState() {
@@ -218,7 +199,7 @@ class _CongratulationScreenState extends State<CongratulationScreen>
               const SizedBox(height: 80),
 
               const Text(
-                '🎉 Congratulations!',
+                '🎉 Congratulations ',
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
@@ -228,7 +209,7 @@ class _CongratulationScreenState extends State<CongratulationScreen>
               const SizedBox(height: 25),
 
               Text(
-                'You won x${widget.speed} Speed Boost 🚀',
+                'You won ${widget.reward} Coins',
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -248,7 +229,7 @@ class _CongratulationScreenState extends State<CongratulationScreen>
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: [
                         BoxShadow(
-                          color: getSpeedColor(widget.speed).withValues(alpha: 0.6),
+                          color: Colors.orange.withValues(alpha: 0.6),
                           blurRadius: 30,
                           spreadRadius: 8,
                         ),
@@ -256,31 +237,31 @@ class _CongratulationScreenState extends State<CongratulationScreen>
                     ),
                     child: Column(
                       children: [
-                        Text(
-                          "🚀 Speed Boost",
+                        const Text(
+                          "Coins Reward",
                           style: TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
-                            color: getSpeedColor(widget.speed),
+                            color: Colors.orange,
                           ),
                         ),
 
                         const SizedBox(height: 10),
 
                         Text(
-                          "x${widget.speed}",
-                          style: TextStyle(
+                          "${widget.reward}",
+                          style: const TextStyle(
                             fontSize: 42,
                             fontWeight: FontWeight.bold,
-                            color: getSpeedColor(widget.speed),
+                            color: Colors.orange,
                           ),
                         ),
 
                         const SizedBox(height: 6),
 
-                        Text(
-                          "${getAdName(widget.speed)} Reward",
-                          style: const TextStyle(
+                        const Text(
+                          "Watch the ad to claim your reward",
+                          style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey,
                           ),
@@ -296,8 +277,8 @@ class _CongratulationScreenState extends State<CongratulationScreen>
               if (!_adWatched)
                 ElevatedButton(
                   onPressed: _rewardedAd == null ? null : _showAd,
-                  child: Text(
-                    'Watch ${getAdName(widget.speed)} to activate x${widget.speed}',
+                  child: const Text(
+                    'Watch Ad to Claim Coins',
                   ),
                 ),
 
@@ -307,13 +288,11 @@ class _CongratulationScreenState extends State<CongratulationScreen>
                     backgroundColor: Colors.green,
                   ),
                   onPressed: () {
-                    widget.onSpeedBoost(
-                      widget.speed,
-                      widget.duration,
-                    );
+                    widget.onClaim(widget.reward);
+
                     Navigator.pop(context);
                   },
-                  child: const Text('Activate 🚀'),
+                  child: const Text('Claim Coins'),
                 ),
 
               const SizedBox(height: 80),

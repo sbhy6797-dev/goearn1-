@@ -1,11 +1,12 @@
 import 'dart:async';
+import 'dart:math';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:pedometer/pedometer.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
 import 'package:shared_preferences/shared_preferences.dart';
 import 'lucky_spin_screen.dart';
 import 'main.dart';
@@ -19,15 +20,26 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
-  bool _isListening = false;
 
-  int getRemainingSeconds() {
-    if (boostEndTime == null) return 0;
+  Future<void> saveDeviceLanguage() async {
+    final user = FirebaseAuth.instance.currentUser;
 
-    final remaining = boostEndTime!.difference(DateTime.now()).inSeconds;
+    if (user == null) return;
 
-    return remaining > 0 ? remaining : 0;
+    final languageCode =
+        ui.PlatformDispatcher.instance.locale.languageCode;
+
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .set({
+      'language': languageCode,
+    }, SetOptions(merge: true));
   }
+
+
+
+  bool _isListening = false;
 
   Timer? _uiTimer;
   int steps = 0;
@@ -40,7 +52,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     return "${now.year}-${now.month.toString().padLeft(2,'0')}-${now.day.toString().padLeft(2,'0')}";
   }
 
-  List<int> speedLevels = [3, 5, 7];
+
 
   int initialSteps = 0;
   bool isFirstUpdate = true;
@@ -58,16 +70,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   late final DocumentReference userDoc;
   late final String uid;
   Timer? _debounce;
-
-  // ===== Speed Boost =====
-  double boostMultiplier = 1.0;
-
-  DateTime? boostEndTime;
-  int remainingSeconds = 0;
-
-  String lastSpinText = "";
-  int speedLevel = 0;
-
 
   // ===== Ad Tracking =====
   int adsWatchedCount = 0;
@@ -94,47 +96,56 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   InterstitialAd? _interstitialAd;
   bool _isInterstitialReady = false;
 
-  Future<void> registerAdWatch() async {
-    adsWatchedCount++;
+// ===== Banner Ad =====
+  BannerAd? _bannerAd;
+  bool _isBannerReady = false;
+
+
+  Future<void> addRewardedCoins() async {
+
+    const int reward = 100;
+
+    setState(() {
+      totalCoins += reward;
+      adsWatchedCount++;
+    });
 
     await userDoc.set({
+      'totalCoins': totalCoins,
       'adsWatchedToday': adsWatchedCount,
       'adsDate': getTodayKey(),
     }, SetOptions(merge: true));
+
   }
 
   @override
   void initState() {
     super.initState();
 
-    // ✅ ADD THIS (UMP SAFE INIT)
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user != null) {
+      uid = user.uid;
+      userDoc = FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid);
+
+      saveDeviceLanguage();
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       initConsentFormSafe();
     });
 
     _loadLocalData();
 
-    _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) return;
-
-      setState(() {
-        remainingSeconds = getRemainingSeconds();
-      });
-    });
-
     totalCoins = widget.totalCoins;
-
-    final user = FirebaseAuth.instance.currentUser!;
-    uid = user.uid;
-    userDoc = FirebaseFirestore.instance.collection('users').doc(uid);
 
     initApp();
 
-    Future.delayed(const Duration(milliseconds: 800), () {
-      _restoreTimerFromFirebase();
-    });
-
     _loadInterstitial();
+
+    _loadBannerAd();
   }
 
   @override
@@ -149,7 +160,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
   @override
   void didPopNext() {
-    _restoreTimerFromFirebase();
+
 
 
     setState(() {});
@@ -212,19 +223,62 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     );
   }
 
+
+
+  void _loadBannerAd() {
+
+    _bannerAd?.dispose();
+
+    _bannerAd = BannerAd(
+      size: AdSize.banner,
+      adUnitId: 'ca-app-pub-5925712456846655/9667012771',
+      request: const AdRequest(),
+
+      listener: BannerAdListener(
+
+        onAdLoaded: (ad) {
+
+          if (!mounted) return;
+
+          setState(() {
+            _isBannerReady = true;
+          });
+
+        },
+
+        onAdFailedToLoad: (ad, error) {
+
+          ad.dispose();
+
+          if (!mounted) return;
+
+          setState(() {
+            _isBannerReady = false;
+          });
+
+          Future.delayed(const Duration(seconds: 5), () {
+            if (mounted) {
+              _loadBannerAd();
+            }
+          });
+
+        },
+
+      ),
+    );
+
+    _bannerAd!.load();
+  }
+
+
   void _showInterstitial() async {
     if (!_isInterstitialReady || _interstitialAd == null) return;
 
     _interstitialAd!.fullScreenContentCallback =
         FullScreenContentCallback(
-          onAdDismissedFullScreenContent: (ad) async {
+          onAdDismissedFullScreenContent: (ad) {
             ad.dispose();
             _loadInterstitial();
-
-            if (mounted) {
-              await registerAdWatch();
-            }
-
           },
 
           onAdFailedToShowFullScreenContent: (ad, error) {
@@ -274,81 +328,12 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
           adsWatchedCount = adsCount;
         });
 
-        // ================= BOOST LOGIC =================
-        final boostTime = data['boostEndTime'];
-
-        if (boostTime != null) {
-          final DateTime endTime = boostTime.toDate();
-          final int remaining =
-              endTime.difference(DateTime.now()).inSeconds;
-
-          if (remaining > 0) {
-
-            if (!mounted) return;
-
-            setState(() {
-              boostEndTime = endTime;
-              remainingSeconds = remaining;
-              boostMultiplier =
-                  (data['boostMultiplier'] ?? 3).toDouble();
-            });
-          } else {
-
-            if (!mounted) return;
-
-            setState(() {
-              boostEndTime = null;
-              remainingSeconds = 0;
-              boostMultiplier = 1.0;
-            });
-          }
-        }
       }
     } catch (e) {
       debugPrint('Error loading Firebase data: $e');
     }
   }
 
-
-  Future<void> _restoreTimerFromFirebase() async {
-    try {
-      final snapshot = await userDoc.get();
-      if (!snapshot.exists) return;
-
-      final data = snapshot.data() as Map<String, dynamic>;
-      Timestamp? boostTime = data['boostEndTime'];
-
-      if (boostTime == null) return;
-
-      DateTime endTime = boostTime.toDate();
-      final remaining = endTime.difference(DateTime.now()).inSeconds;
-
-      if (remaining > 0) {
-        boostEndTime = endTime;
-
-        activateSpeed(
-          (data['boostMultiplier'] ?? 3),
-          remaining,
-          isRestore: true,
-        );
-
-        if (!mounted) return;
-        setState(() {
-          remainingSeconds = remaining;
-        });
-
-      } else {
-        if (!mounted) return;
-        setState(() {
-          boostEndTime = null;
-          boostMultiplier = 1.0;
-          remainingSeconds = 0;
-        });
-      }
-    } catch (e) {
-      debugPrint("Timer restore error: $e");
-    }
-  }
 
   void initPedometer() {
     if (_isListening) return;
@@ -391,15 +376,21 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
     if (diff > 0) {
 
-      int newSteps = (steps + diff).clamp(0, maxSteps);
-      int boostedSteps = (newSteps * boostMultiplier).floor();
-      int newCoins = (boostedSteps ~/ stepPerCoin) * 10;
+      int newSteps = max(
+        steps,
+        (steps + diff).clamp(0, maxSteps),
+      );
+
+      int newCoins = (newSteps ~/ stepPerCoin) * 50;
 
       if (!mounted) return;
 
       setState(() {
         steps = newSteps;
-        coins = newCoins;
+
+        if (newCoins > coins) {
+          coins = newCoins;
+        }
       });
 
       lastSensorSteps = event.steps;
@@ -513,30 +504,9 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   }
 
 
-  void activateSpeed(int speed, int secondsToAdd, {bool isRestore = false}) async {
-
-    if (!mounted) return;
-    if (!isRestore) {
-      if (boostEndTime != null && boostEndTime!.isAfter(DateTime.now())) {
-        boostEndTime = boostEndTime!.add(Duration(seconds: secondsToAdd));
-      } else {
-        boostEndTime = DateTime.now().add(Duration(seconds: secondsToAdd));
-      }
-
-      await userDoc.set({
-        'boostEndTime': Timestamp.fromDate(boostEndTime!),
-        'boostMultiplier': speed,
-      }, SetOptions(merge: true));
-    }
-    if (!mounted) return;
-    setState(() {
-      boostMultiplier = speed.toDouble();
-    });
-  }
-
-
   @override
   void dispose() {
+    _bannerAd?.dispose();
     _uiTimer?.cancel();
     _debounce?.cancel();
 
@@ -576,63 +546,27 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
   void showLuckySpin() {
     if (!mounted) return;
+
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => LuckySpinScreen(
-          onRewardCollected: (reward) {
+          onRewardCollected: (reward) async {
 
-            int currentIndex =
-            speedLevels.indexOf(boostMultiplier.toInt());
-
-            if (currentIndex == -1) {
-              currentIndex = 0;
-            } else {
-              currentIndex =
-                  (currentIndex + 1) % speedLevels.length;
-            }
-
-            int newSpeed = speedLevels[currentIndex];
-
-            if (!mounted) return;
             setState(() {
-              boostMultiplier = newSpeed.toDouble();
-              lastSpinText = "🚀 Speed Boost x$newSpeed Activated";
+              totalCoins += reward;
             });
 
-            activateSpeed(newSpeed, 60);
+            await userDoc.set({
+              'totalCoins': totalCoins,
+            }, SetOptions(merge: true));
+
           },
         ),
       ),
     );
   }
 
-  void showAdSpeedBoost() {
-    if (!mounted) return;
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => CongratulationScreen(
-          reward: 0,
-          speed: 3,
-          duration: const Duration(minutes: 2),
-          onClaim: (reward) {},
-
-          onSpeedBoost: (speed, duration) async {
-            if (!mounted) return;
-
-            adsWatchedCount++;
-            await _updateFirebase();
-
-            if (!mounted) return;
-
-            activateSpeed(3, duration.inSeconds);
-          },
-        ),
-      ),
-    );
-  }
 
   void _showCongratulationScreen() {
     if (!mounted) return;
@@ -641,15 +575,21 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       context,
       MaterialPageRoute(
         builder: (_) => CongratulationScreen(
-          reward: 0,
-          speed: 3,
-          duration: const Duration(minutes: 2),
-          onClaim: (reward) {},
-          onSpeedBoost: (speed, duration) {
-            adsWatchedCount++;
-            _updateFirebase();
+          onRewardCollected: () async {
 
-            activateSpeed(3, duration.inSeconds);
+            const int reward = 100;
+
+            setState(() {
+              totalCoins += reward;
+              adsWatchedCount++;
+            });
+
+            await userDoc.set({
+              'totalCoins': totalCoins,
+              'adsWatchedToday': adsWatchedCount,
+              'adsDate': getTodayKey(),
+            }, SetOptions(merge: true));
+
           },
         ),
       ),
@@ -678,20 +618,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                 ),
               ),
 
-            if (getRemainingSeconds() > 0)
-
-              Column(
-                children: [
-                  Text(
-                    "🚀 Boost x${boostMultiplier.toInt()} Active",
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 18),
-                  ),
-                  Text(
-                    "Time remaining: ${getRemainingSeconds()} s | Ads watched: $adsWatchedCount",
-                  ),
-                ],
-              ),
             const SizedBox(height: 20),
             _stepConvertRow(),
             const SizedBox(height: 20),
@@ -788,7 +714,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     Positioned(top: 55, right: 40, child: Text('10000')),
     Positioned(right: 15, child: Text('17000')),
     Positioned(bottom: 55, right: 40, child: Text('25000')),
-    Positioned(bottom: 18, child: Text('30000')),
+    Positioned(bottom: 18, child: Text('35000')),
     Positioned(bottom: 55, left: 40, child: Text('45000')),
     Positioned(left: 15, child: Text('55000')),
     Positioned(top: 55, left: 40, child: Text('70000')),
@@ -860,23 +786,39 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   Widget _convertButtonWithBanner() {
     return Column(
       children: [
+
         GestureDetector(
           onTap: coins == 0 ? null : convertCoins,
           child: Container(
             height: 45,
             margin: const EdgeInsets.symmetric(horizontal: 40),
             decoration: BoxDecoration(
-              color: coins == 0 ? Colors.grey : const Color(0xffF1B938),
+              color: coins == 0
+                  ? Colors.grey
+                  : const Color(0xffF1B938),
               borderRadius: BorderRadius.circular(24),
             ),
             child: const Center(
               child: Text(
                 'Convert to Coins',
-                style: TextStyle(fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ),
         ),
+
+        const SizedBox(height: 15),
+
+        // ===== Banner Ad تحت زر Convert =====
+        if (_isBannerReady)
+          SizedBox(
+            width: _bannerAd!.size.width.toDouble(),
+            height: _bannerAd!.size.height.toDouble(),
+            child: AdWidget(ad: _bannerAd!),
+          ),
+
       ],
     );
   }
@@ -924,20 +866,11 @@ class CircleProgressPainter extends CustomPainter {
 // =================== Congratulation Screen ===================
 class CongratulationScreen extends StatefulWidget {
 
-  final int reward;
-  final int speed;
-  final Duration duration;
-
-  final Function(int) onClaim;
-  final Function(int, Duration) onSpeedBoost;
+  final Function() onRewardCollected;
 
   const CongratulationScreen({
     super.key,
-    required this.reward,
-    required this.speed,
-    required this.duration,
-    required this.onClaim,
-    required this.onSpeedBoost,
+    required this.onRewardCollected,
   });
 
   @override
@@ -945,12 +878,15 @@ class CongratulationScreen extends StatefulWidget {
 }
 
 class _CongratulationScreenState extends State<CongratulationScreen> {
+
+  final Random _random = Random();
+
   RewardedAd? _rewardedAd;
   bool _isAdLoading = false;
   bool _adWatched = false;
   BannerAd? _bannerAd;
   bool _isBannerReady = false;
-
+  bool _showCollectAnimation = false;
   @override
   void initState() {
     super.initState();
@@ -1044,53 +980,146 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
   }
 
   @override
-  void dispose() {
-    _rewardedAd?.dispose();
-    _bannerAd?.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xffB8ECFF),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              '🎉 Congratulations!',
-              style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Watch ad to get temporary speed boost 🚀',
-              style: TextStyle(fontSize: 22),
-            ),
-            const SizedBox(height: 40),
-            if (!_adWatched)
-              ElevatedButton(
-                onPressed: _rewardedAd == null ? null : _showAd,
-                child: const Text('Watch Ad to activate speed boost'),
+      body: Stack(
+        children: [
+          // 🪙 Falling Coins Animation
+          ...List.generate(15, (index) {
+            return TweenAnimationBuilder<double>(
+              tween: Tween(
+                begin: -100,
+                end: MediaQuery.of(context).size.height + 100,
               ),
-            if (_adWatched)
-              ElevatedButton(
-                onPressed: () {
-                  widget.onSpeedBoost(widget.speed, widget.duration);
-                  Navigator.pop(context);
+              duration: Duration(
+                seconds: 10 + _random.nextInt(8),
+              ),
+              curve: Curves.linear,
+              builder: (context, value, child) {
+                return Positioned(
+                  left: _random.nextDouble() *
+                      MediaQuery.of(context).size.width,
+                  top: value,
+                  child: Opacity(
+                    opacity: 0.5,
+                    child: Transform.rotate(
+                      angle: value / 80,
+                      child: Icon(
+                        Icons.monetization_on,
+                        color: Colors.amber,
+                        size: 18 + _random.nextInt(20).toDouble(),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            );
+          }),
+          // 🪙 Collect Animation (تطلع لفوق)
+          if (_showCollectAnimation)
+            ...List.generate(20, (index) {
+              return TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: -350),
+                duration: Duration(
+                  milliseconds: 1200 + _random.nextInt(800),
+                ),
+                builder: (context, value, child) {
+                  return Positioned(
+                    bottom: 180,
+                    left: MediaQuery.of(context).size.width / 2 +
+                        (_random.nextDouble() * 200 - 100),
+                    child: Transform.translate(
+                      offset: Offset(
+                        0,
+                        value,
+                      ),
+                      child: Transform.rotate(
+                        angle: value / 20,
+                        child: Icon(
+                          Icons.paid,
+                          color: Colors.amber,
+                          size: 25 + _random.nextInt(15).toDouble(),
+                        ),
+                      ),
+                    ),
+                  );
                 },
-                child: const Text('Activate speed boost 🚀'),
-              ),
-            const SizedBox(height: 150),
-            if (_isBannerReady)
-              SizedBox(
-                width: _bannerAd!.size.width.toDouble(),
-                height: _bannerAd!.size.height.toDouble(),
-                child: AdWidget(ad: _bannerAd!),
-              ),
-          ],
-        ),
+              );
+            }),
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text(
+                  '🎉 Congratulations 🎉',
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 20),
+                const Column(
+                  children: [
+                    Text(
+                      'Watch Ad to Claim',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      '100 Coins',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 40),
+
+                if (!_adWatched)
+                  ElevatedButton(
+                    onPressed: _rewardedAd == null ? null : _showAd,
+                    child: const Text('Watch Ad to Claim Coins'),
+                  ),
+
+                if (_adWatched)
+                  ElevatedButton(
+                    onPressed: () async {
+
+                      setState(() {
+                        _showCollectAnimation = true;
+                      });
+
+                      await Future.delayed(
+                        const Duration(seconds: 2),
+                      );
+
+                      if (!context.mounted) return;
+
+                      widget.onRewardCollected();
+
+                      Navigator.pop(context);
+
+                    },
+                    child: const Text('Collect 100 Coins'),
+                  ),
+                const SizedBox(height: 150),
+                if (_isBannerReady)
+                  SizedBox(
+                    width: _bannerAd!.size.width.toDouble(),
+                    height: _bannerAd!.size.height.toDouble(),
+                    child: AdWidget(ad: _bannerAd!),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
+
     );
   }
 }

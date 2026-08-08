@@ -258,6 +258,7 @@ console.log("RAW EVENT:", JSON.stringify(event, null, 2));
 exports.applyReferralCode = onCall(async (request) => {
 
   const uid = request.auth?.uid;
+  console.log("applyReferralCode called", uid);
   const code = (request.data.code || "").trim().toUpperCase();
 
   if (!uid) throw new HttpsError("unauthenticated", "Login required");
@@ -265,7 +266,14 @@ exports.applyReferralCode = onCall(async (request) => {
   const db = admin.firestore();
 
   const userRef = db.collection("users").doc(uid);
+const checkUser = await userRef.get();
 
+if (checkUser.data()?.usedReferral === true) {
+  throw new HttpsError(
+    "already-exists",
+    "Referral already used"
+  );
+}
   const query = await db.collection("users")
     .where("referralCode", "==", code)
     .limit(1)
@@ -279,21 +287,21 @@ exports.applyReferralCode = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Self referral not allowed");
   }
 
-  await db.runTransaction(async (tx) => {
+ await db.runTransaction(async (tx) => {
 
-    const userSnap = await tx.get(userRef);
-    const ownerSnap = await tx.get(owner.ref);
+   const userSnap = await tx.get(userRef);
+   const ownerSnap = await tx.get(owner.ref);
 
-    tx.update(userRef, {
-      totalCoins: (userSnap.data().totalCoins || 0) + 50,
-      usedReferral: true,
-    });
+   tx.update(userRef, {
+     totalCoins: (userSnap.data().totalCoins || 0) + 100,
+     usedReferral: true,
+   });
 
-    tx.update(owner.ref, {
-      totalCoins: (ownerSnap.data().totalCoins || 0) + 50,
-    });
+   tx.update(owner.ref, {
+     totalCoins: (ownerSnap.data().totalCoins || 0) + 100,
+   });
 
-  });
+ });
 
   return { success: true };
 });
@@ -889,39 +897,51 @@ exports.offerwallXPostback = onRequest(async (req, res) => {
 
 
 
+const TIMEWALL_SECRET = "f1270d455a4358b889961b39cd79e420";
+
 
 const MODE = "LIVE";
 
 exports.timewallPostback = onRequest(async (req, res) => {
   try {
 
+    console.log("========== TIMEWALL REQUEST ==========");
+    console.log(JSON.stringify(req.query));
+    console.log("======================================");
+
+
     const userId = req.query.user;
-    const amount = Number(req.query.currencyAmount || req.query.amount || 0);
+    const amount = Number(req.query.amount || req.query.currencyAmount || 0);
+    const revenue = req.query.revenue;
     const tx = req.query.tx;
     const hash = req.query.hash;
+
 
     if (!userId || !tx) {
       return res.status(400).send("Missing params");
     }
 
+
     const userRef = admin.firestore().collection("users").doc(userId);
     const logRef = admin.firestore().collection("timewall_tx").doc(tx);
+
 
     // ===================== TEST MODE =====================
     if (MODE === "TEST") {
 
       console.log("🧪 TEST MODE ACTIVE");
 
-      // منع التكرار حتى في الاختبار
       if ((await logRef.get()).exists) {
         return res.status(200).send("DUPLICATE TEST");
       }
+
 
       await admin.firestore().runTransaction(async (t) => {
         t.set(userRef, {
           totalCoins: admin.firestore.FieldValue.increment(amount),
         }, { merge: true });
       });
+
 
       await logRef.set({
         userId,
@@ -931,64 +951,133 @@ exports.timewallPostback = onRequest(async (req, res) => {
         time: admin.firestore.FieldValue.serverTimestamp()
       });
 
+
       return res.status(200).send("OK TEST MODE");
     }
 
+
+
     // ===================== LIVE MODE =====================
+
     if (!hash) {
       return res.status(400).send("Missing hash");
     }
 
+
+
+    const rawString = userId + revenue + TIMEWALL_SECRET;
+
+    console.log("HASH STRING:", rawString);
+
     const expectedHash = crypto
       .createHash("sha256")
-      .update(userId + amount + tx + SECRET)
+      .update(rawString)
       .digest("hex");
 
+
+
+    console.log("========== HASH DEBUG ==========");
+    console.log("userId:", userId);
+    console.log("revenue:", revenue);
+    console.log("amount:", amount);
+    console.log("receivedHash:", hash);
+    console.log("expectedHash:", expectedHash);
+    console.log("===============================");
+
+
+
     if (hash !== expectedHash) {
+
+
       await admin.firestore().collection("timewall_logs").add({
+
         type: "invalid_hash",
+
         userId,
         tx,
+
         amount,
+        revenue,
+
         receivedHash: hash,
+        expectedHash,
+
         time: admin.firestore.FieldValue.serverTimestamp()
+
       });
+
 
       return res.status(403).send("Invalid hash");
     }
 
+
+
+
     // منع التكرار
+
     if ((await logRef.get()).exists) {
+
       return res.status(200).send("DUPLICATE");
+
     }
 
+
+
+
     await admin.firestore().runTransaction(async (t) => {
+
       t.set(userRef, {
+
         totalCoins: admin.firestore.FieldValue.increment(amount),
+
       }, { merge: true });
+
     });
 
+
+
+
     await logRef.set({
+
       userId,
       tx,
       amount,
+
+      revenue,
+
       mode: "live",
+
       time: admin.firestore.FieldValue.serverTimestamp()
+
     });
+
+
 
     return res.status(200).send("OK");
 
+
+
   } catch (e) {
+
+
     console.error(e);
 
+
     await admin.firestore().collection("timewall_logs").add({
+
       type: "error",
+
       message: e.message,
+
       time: admin.firestore.FieldValue.serverTimestamp()
+
     });
 
+
     return res.status(500).send("error");
+
   }
+
 });
 
 
@@ -1569,4 +1658,468 @@ exports.offerwallMediaPostback = onRequest(async (req, res) => {
     return res.status(500).send("ERROR");
 
   }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+
+const db = admin.firestore();
+
+exports.sendDailyNotifications = onSchedule(
+{
+ schedule: "0 9,13,17,21 * * *",
+  timeZone: "Africa/Cairo",
+},
+async () => {
+
+
+const dailyMessages = {
+
+0: [ // الأحد
+{
+title: "🚶 ابدأ يومك",
+body: "ابدأ المشي الآن واربح Coins."
+},
+{
+title: "📝 استطلاعات جديدة",
+body: "شارك في الاستطلاعات واحصل على مكافآت."
+},
+{
+title: "🎡 عجلة الحظ",
+body: "جرّب عجلة الحظ واربح جوائز مجانية."
+},
+{
+title: "💰 السحب متاح",
+body: "وصلت للحد المطلوب؟ اطلب سحب مكافأتك."
+}
+],
+
+1: [ // الإثنين
+{
+title: "🌞 صباح النشاط",
+body: "خطواتك اليوم تتحول إلى Coins."
+},
+{
+title: "🎯 تحدي الخطوات",
+body: "حقق هدفك اليوم واحصل على المزيد."
+},
+{
+title: "📝 اربح من الاستطلاعات",
+body: "استطلاعات جديدة تنتظرك داخل التطبيق."
+},
+{
+title: "🎁 مكافأة GoEarn",
+body: "افتح التطبيق واجمع مكافأتك."
+}
+],
+
+2: [ // الثلاثاء
+{
+title: "🚀 بداية قوية",
+body: "ابدأ اليوم واجمع Coins أكثر."
+},
+{
+title: "🎡 جرب عجلة الحظ",
+body: "لفة واحدة قد تمنحك مكافأة كبيرة."
+},
+{
+title: "📝 فرص ربح جديدة",
+body: "أكمل استطلاع واحصل على Coins."
+},
+{
+title: "💳 وقت السحب",
+body: "اطلب سحب أرباحك بسهولة."
+}
+],
+
+3: [ // الأربعاء
+{
+title: "🔥 منتصف الأسبوع",
+body: "لا توقف خطواتك، استمر في الربح."
+},
+{
+title: "🎡 جائزة تنتظرك",
+body: "ادخل عجلة الحظ واربح اليوم."
+},
+{
+title: "📝 استطلاعات يومية",
+body: "هناك مهام جديدة لك الآن."
+},
+{
+title: "🏆 استمر في الإنجاز",
+body: "كل خطوة تقربك من المكافأة."
+}
+],
+
+4: [ // الخميس
+{
+title: "🚶 خطواتك = Coins",
+body: "امشِ أكثر واربح أكثر."
+},
+{
+title: "🎁 مكافأة خاصة",
+body: "افتح التطبيق وشاهد فرص الربح."
+},
+{
+title: "📝 اكسب من الاستطلاعات",
+body: "استطلاعات جديدة متاحة الآن."
+},
+{
+title: "💰 جاهز للسحب؟",
+body: "راجع رصيدك واطلب السحب."
+}
+],
+
+5: [ // الجمعة
+{
+title: "🌙 يوم الجمعة",
+body: "ابدأ يومك بخطوات ومكافآت."
+},
+{
+title: "🎡 عجلة الحظ اليومية",
+body: "لا تفوت فرصتك للفوز."
+},
+{
+title: "📝 مهام جديدة",
+body: "أكمل الاستطلاعات واربح Coins."
+},
+{
+title: "⭐ مكافآت GoEarn",
+body: "عد للتطبيق واجمع المزيد."
+}
+],
+
+6: [ // السبت
+{
+title: "☀️ عطلة ممتعة",
+body: "استمتع بالمشي واربح."
+},
+{
+title: "🎯 هدف جديد",
+body: "حقق خطواتك اليومية."
+},
+{
+title: "🎡 Spin & Win",
+body: "جرّب عجلة الحظ الآن."
+},
+{
+title: "💰 سحب الأرباح",
+body: "رصيدك جاهز عندما تصل للحد المطلوب."
+}
+],
+
+};
+
+const dailyMessagesEn = {
+
+0: [
+{
+title: "🚶 Start Your Day",
+body: "Start walking now and earn Coins."
+},
+{
+title: "📝 New Surveys",
+body: "Complete surveys and get rewards."
+},
+{
+title: "🎡 Lucky Wheel",
+body: "Try the lucky wheel and win free rewards."
+},
+{
+title: "💰 Withdraw Available",
+body: "Reached the limit? Request your reward."
+}
+],
+
+1: [
+{
+title: "🌞 Good Morning",
+body: "Your steps today turn into Coins."
+},
+{
+title: "🎯 Step Challenge",
+body: "Reach your goal and earn more."
+},
+{
+title: "📝 Earn From Surveys",
+body: "New surveys are waiting for you."
+},
+{
+title: "🎁 GoEarn Reward",
+body: "Open the app and collect your reward."
+}
+],
+
+2: [
+{
+title: "🚀 Strong Start",
+body: "Start today and collect more Coins."
+},
+{
+title: "🎡 Lucky Wheel",
+body: "One spin may give you a big reward."
+},
+{
+title: "📝 New Earning Chance",
+body: "Complete surveys and earn Coins."
+},
+{
+title: "💳 Withdraw Time",
+body: "Request your earnings easily."
+}
+],
+
+3: [
+{
+title: "🔥 Midweek Energy",
+body: "Keep walking and keep earning."
+},
+{
+title: "🎡 Prize Waiting",
+body: "Open the lucky wheel today."
+},
+{
+title: "📝 Daily Surveys",
+body: "New tasks are available now."
+},
+{
+title: "🏆 Keep Going",
+body: "Every step gets you closer."
+}
+],
+
+4: [
+{
+title: "🚶 Steps = Coins",
+body: "Walk more and earn more."
+},
+{
+title: "🎁 Special Reward",
+body: "Open the app and see your chances."
+},
+{
+title: "📝 Earn With Surveys",
+body: "New surveys are available."
+},
+{
+title: "💰 Ready To Withdraw?",
+body: "Check your balance and withdraw."
+}
+],
+
+5: [
+{
+title: "🌙 Friday Rewards",
+body: "Start your day with steps and rewards."
+},
+{
+title: "🎡 Daily Lucky Wheel",
+body: "Don't miss your chance to win."
+},
+{
+title: "📝 New Tasks",
+body: "Complete surveys and earn Coins."
+},
+{
+title: "⭐ GoEarn Rewards",
+body: "Return to the app and earn more."
+}
+],
+
+6: [
+{
+title: "☀️ Enjoy Your Weekend",
+body: "Enjoy walking and earning."
+},
+{
+title: "🎯 New Goal",
+body: "Complete your daily steps."
+},
+{
+title: "🎡 Spin & Win",
+body: "Try the lucky wheel now."
+},
+{
+title: "💰 Withdraw Earnings",
+body: "Your balance is ready when you reach the limit."
+}
+],
+
+};
+
+
+
+const hour = Number(
+  new Intl.DateTimeFormat("en-US", {
+    timeZone: "Africa/Cairo",
+    hour: "numeric",
+    hour12: false,
+  }).format(new Date())
+);
+
+
+const day = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Africa/Cairo",
+  weekday: "short",
+}).format(new Date());
+
+
+const hours = {
+9: 0,
+13: 1,
+17: 2,
+21: 3
+};
+
+const messageIndex = hours[hour] ?? 0;
+
+
+const days = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6
+};
+
+
+const dayNumber = days[day] ?? 0;
+
+
+const arabicNotification =
+dailyMessages[dayNumber]?.[messageIndex] ||
+{
+  title: "🚶 GoEarn",
+  body: "ابدأ المشي اليوم واربح Coins."
+};
+
+const englishNotification =
+dailyMessagesEn[dayNumber]?.[messageIndex] ||
+{
+  title: "🚶 GoEarn",
+  body: "Start walking today and earn Coins."
+};
+
+
+const users = await db.collection("users").get();
+
+
+const arabicTokens = [];
+const englishTokens = [];
+
+users.forEach(doc => {
+
+const data = doc.data();
+
+if(data.fcmToken){
+
+  if(data.language === "en"){
+    englishTokens.push(data.fcmToken);
+  } else {
+    arabicTokens.push(data.fcmToken);
+  }
+
+}
+
+});
+
+
+if(arabicTokens.length === 0 && englishTokens.length === 0){
+  console.log("No tokens found");
+  return;
+}
+
+
+let totalSent = 0;
+
+async function sendNotifications(tokens, notification){
+
+  for (let i = 0; i < tokens.length; i += 500) {
+
+    const batchTokens = tokens.slice(i, i + 500);
+
+    const response = await admin.messaging()
+    .sendEachForMulticast({
+
+      tokens: batchTokens,
+
+      notification:{
+        title: notification.title,
+        body: notification.body,
+      },
+
+    });
+
+    totalSent += response.successCount;
+  }
+
+}
+
+
+// إرسال العربي
+await sendNotifications(
+  arabicTokens,
+  arabicNotification
+);
+
+
+// إرسال الإنجليزي
+await sendNotifications(
+  englishTokens,
+  englishNotification
+);
+
+
+console.log({
+  day,
+  hour,
+ arabicMessage: arabicNotification.title,
+ englishMessage: englishNotification.title,
+  arabicUsers: arabicTokens.length,
+  englishUsers: englishTokens.length,
+  sent: totalSent
+});
+// حفظ إحصائيات الإشعارات
+const today = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Africa/Cairo",
+}).format(new Date());
+
+
+await db.collection("notificationStats")
+.doc(today)
+.set({
+
+  sent: totalSent,
+
+  arabicUsers: arabicTokens.length,
+
+  englishUsers: englishTokens.length,
+
+  opened: 0,
+
+  lastTitleArabic: arabicNotification.title,
+
+  lastTitleEnglish: englishNotification.title,
+
+  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+
+}, { merge: true });
 });

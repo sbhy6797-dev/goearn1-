@@ -242,14 +242,12 @@ class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
   @override
-  State<MyApp> createState() => _MyAppState();
+  State createState() => _MyAppState();
 }
 
+class _MyAppState extends State {
 
-
-class _MyAppState extends State<MyApp> {
-
-  Future<void> checkForUpdate() async {
+  Future<bool> checkForUpdate() async {
     try {
       final info = await InAppUpdate.checkForUpdate();
 
@@ -257,48 +255,76 @@ class _MyAppState extends State<MyApp> {
           UpdateAvailability.updateAvailable) {
 
         if (info.immediateUpdateAllowed) {
+          try {
+            await InAppUpdate.performImmediateUpdate();
 
-          await InAppUpdate.performImmediateUpdate();
+            return true;
+          } catch (e) {
+            debugPrint("Immediate update failed: $e");
 
-        } else if (info.flexibleUpdateAllowed) {
+            if (mounted) {
+              showUpdateDialog();
+            }
 
-          await InAppUpdate.startFlexibleUpdate();
-
-          await InAppUpdate.completeFlexibleUpdate();
+            return false;
+          }
         }
+
+        if (mounted) {
+          showUpdateDialog();
+        }
+
+        return false;
       }
+
+      return true;
 
     } catch (e) {
       debugPrint("Update check failed: $e");
+
+      // لا نسجل الخطأ في Crashlytics
+      // ولا نسمح بدخول التطبيق
+      if (mounted) {
+        showUpdateDialog();
+      }
+
+      return false;
     }
   }
-
 
   void showUpdateDialog() {
     showDialog(
       context: navigatorKey.currentContext!,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text("تحديث مطلوب"),
-        content: const Text("لازم تحدث التطبيق عشان تقدر تكمل."),
-        actions: [
-          TextButton(
-            onPressed: () {
-              launchUrl(
-                Uri.parse(
-                    "https://play.google.com/store/apps/details?id=com.goearn.goearn1"
-                ),
-                mode: LaunchMode.externalApplication,
-              );
-            },
-            child: const Text("uptade"),
+      builder: (context) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          title: const Text("Update Required"),
+          content: const Text(
+            "A new version of the app is available.\n"
+                "You must update the app to continue.",
           ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () async {
+                try {
+                  await launchUrl(
+                    Uri.parse(
+                      "https://play.google.com/store/apps/details?id=com.goearn.goearn1",
+                    ),
+                    mode: LaunchMode.externalApplication,
+                  );
+                } catch (e) {
+                  debugPrint("Could not open Google Play: $e");
+                }
+              },
+              child: const Text("Update"),
+            ),
+          ],
+        ),
       ),
     );
   }
-
-
 
 
   Timer? _stepTimer;
@@ -380,16 +406,13 @@ class _MyAppState extends State<MyApp> {
             .collection('users')
             .doc(uid)
             .collection('notifications')
-            .orderBy('createdAt', descending: true)
             .limit(50)
             .get();
 
         if (snapshot.docs.length > 40) {
-          Future.microtask(() async {
-            for (var doc in snapshot.docs.skip(30)) {
-              await doc.reference.delete();
-            }
-          });
+          for (var doc in snapshot.docs.skip(30)) {
+            await doc.reference.delete();
+          }
         }
 
       } catch (e, stack) {
@@ -450,7 +473,6 @@ class _MyAppState extends State<MyApp> {
   int _lastSavedSteps = 0;
 
   void _listenSteps() async {
-
     if (!isStepAvailable) {
       debugPrint("Step counter not supported on this device");
       return;
@@ -464,19 +486,23 @@ class _MyAppState extends State<MyApp> {
     }
 
     try {
-      // ✅ مهم: تأخير تشغيل sensor لتخفيف الضغط
       await Future.delayed(const Duration(seconds: 1));
 
       _stepSub = Pedometer.stepCountStream.listen(
             (event) {
           _handleStep(event);
         },
-
         onError: (error) async {
           debugPrint("STEP ERROR: $error");
+
           isStepAvailable = false;
 
           await _stepSub?.cancel();
+
+          if (error.toString().contains("StepCount not available")) {
+            debugPrint("Device does not support Step Counter");
+            return;
+          }
 
           await FirebaseCrashlytics.instance.recordError(
             error,
@@ -484,14 +510,17 @@ class _MyAppState extends State<MyApp> {
             fatal: false,
           );
         },
-
         cancelOnError: true,
       );
-
     } catch (e, stack) {
       debugPrint("Pedometer init error: $e");
 
       isStepAvailable = false;
+
+      // لا نسجل عدم توفر Step Counter
+      if (e.toString().contains("StepCount not available")) {
+        return;
+      }
 
       await FirebaseCrashlytics.instance.recordError(
         e,
@@ -502,7 +531,7 @@ class _MyAppState extends State<MyApp> {
   }
 
 
-  Future<void> _loadSteps(User? user) async {
+  Future _loadSteps(User? user) async {
     if (user == null) return;
 
     try {
@@ -510,7 +539,9 @@ class _MyAppState extends State<MyApp> {
           .collection('users')
           .doc(user.uid);
 
-      final doc = await docRef.get();
+      final doc = await docRef
+          .get()
+          .timeout(const Duration(seconds: 10));
 
       if (!doc.exists) {
         debugPrint("User doc not found");
@@ -527,8 +558,24 @@ class _MyAppState extends State<MyApp> {
       debugPrint("LOADED stepsToday = $stepsToday");
       debugPrint("LOADED startSteps = $_startSteps");
 
+    } on FirebaseException catch (e, stack) {
+
+      debugPrint("Firestore error: ${e.code}");
+
+      // أخطاء طبيعية لا نرسلها إلى Crashlytics
+      if (e.code == 'permission-denied' ||
+          e.code == 'unavailable' ||
+          e.code == 'network-request-failed') {
+        return;
+      }
+
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        fatal: false,
+      );
+
     } catch (e, stack) {
-      debugPrint("Load steps error: $e");
 
       await FirebaseCrashlytics.instance.recordError(
         e,
@@ -543,19 +590,38 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      checkForUpdate();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
 
-    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) async {
-      if (!mounted || user == null) return;
+      // ================= UPDATE CHECK =================
+      final updateCompleted = await checkForUpdate();
 
-      await _initFCM();
-      await _loadSteps(user);
+      if (!mounted || !updateCompleted) {
+        return;
+      }
 
-      Future.delayed(const Duration(seconds: 2), () {
-        _start(user);
-      });
+      // ================= AUTH =================
+      _authSub =
+          FirebaseAuth.instance.authStateChanges().listen((user) async {
+            if (!mounted || user == null) return;
+
+            await _initFCM();
+
+            await Future.delayed(
+              const Duration(milliseconds: 500),
+            );
+
+            await _loadSteps(user);
+
+            Future.delayed(
+              const Duration(seconds: 2),
+                  () {
+                if (mounted) {
+                  _start(user);
+                }
+              },
+            );
+          });
     });
   }
 
@@ -711,7 +777,6 @@ class _MyAppState extends State<MyApp> {
 
 
     initFCMListener();
-
     if (userAcceptedTracking) {
       _stepTimer = Timer(const Duration(seconds: 2), () {
         if (mounted && userAcceptedTracking) {

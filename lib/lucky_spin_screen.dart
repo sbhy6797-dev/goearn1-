@@ -160,27 +160,17 @@ class _LuckySpinScreenState extends State<LuckySpinScreen>
 
   void _calculateReward() {
 
-    int speed;
-    Duration duration;
+    int reward;
 
     if (_selectedIndex == 0) {
-
-      speed = 3;
-      duration = const Duration(minutes: 10);
-
+      reward = 60;
     } else if (_selectedIndex == 2) {
-
-      speed = 5;
-      duration = const Duration(minutes: 15);
-
+      reward = 80;
     } else {
-
-      speed = 7;
-      duration = const Duration(minutes: 20);
-
+      reward = 100;
     }
 
-    rewardText = "🚀 Speed Boost x$speed";
+    rewardText = "🎁 $reward Coins";
 
     setState(() {});
 
@@ -188,12 +178,9 @@ class _LuckySpinScreenState extends State<LuckySpinScreen>
       context,
       MaterialPageRoute(
         builder: (context) => CongratulationScreen(
-          reward: 0,
-          speed: speed,
-          duration: duration,
-          onClaim: (_) {},
-          onSpeedBoost: (speed, duration) {
-            widget.onRewardCollected(speed);
+          reward: reward,
+          onClaim: (coins) {
+            widget.onRewardCollected(coins);
           },
         ),
       ),
@@ -239,7 +226,7 @@ class _LuckySpinScreenState extends State<LuckySpinScreen>
                     angle: _currentAngle,
 
                     child: Image.asset(
-                      'assets/images/Frame 5(2).png',
+                      'assets/images/Frame 5(7).png',
                       width: 300,
                     ),
 
