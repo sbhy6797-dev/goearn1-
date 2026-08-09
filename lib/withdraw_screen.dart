@@ -268,7 +268,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
         .get();
 
     final fcmToken = userSnap.data()?['fcmToken'];
-
+    if (!mounted) return;
     setState(() => isProcessing = true);
 
     try {

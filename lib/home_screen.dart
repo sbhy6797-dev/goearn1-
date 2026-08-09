@@ -311,11 +311,59 @@ class _HomeScreenState
         return;
       }
 
-      final googleAuth = await googleUser.authentication;
+      GoogleSignInAuthentication googleAuth;
+
+      try {
+        googleAuth = await googleUser.authentication;
+      } catch (e, stack) {
+        debugPrint('GOOGLE AUTHENTICATION ERROR: $e');
+        debugPrint('GOOGLE AUTHENTICATION TYPE: ${e.runtimeType}');
+        debugPrint('GOOGLE AUTHENTICATION STACK: $stack');
+
+        await FirebaseCrashlytics.instance.recordError(
+          e,
+          stack,
+          reason: 'Google Authentication Failed',
+          fatal: false,
+        );
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Google authentication failed'),
+            backgroundColor: Colors.red,
+          ),
+        );
+
+        return;
+      }
 
       if (googleAuth.accessToken == null ||
           googleAuth.idToken == null) {
-        throw Exception('Google tokens are missing');
+        final error = Exception('Google tokens are missing');
+
+        debugPrint('GOOGLE TOKENS MISSING');
+        debugPrint('accessToken: ${googleAuth.accessToken != null}');
+        debugPrint('idToken: ${googleAuth.idToken != null}');
+
+        await FirebaseCrashlytics.instance.recordError(
+          error,
+          StackTrace.current,
+          reason: 'Google tokens are missing',
+          fatal: false,
+        );
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Google authentication data is missing'),
+            backgroundColor: Colors.red,
+          ),
+        );
+
+        return;
       }
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,

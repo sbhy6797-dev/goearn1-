@@ -75,6 +75,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   int adsWatchedCount = 0;
 
   DateTime? lastAdTime;
+  bool _isCollectingReward = false;
 
   bool canShowAd() {
     if (!_isInterstitialReady) return false;
@@ -359,53 +360,57 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     }
   }
 
-  void onStepCount(StepCount event) {
 
+  void onStepCount(StepCount event) {
     if (!mounted || !_isListening) return;
 
+    final int sensorSteps = event.steps;
+
+    // أول قراءة من الحساس
     if (lastSensorSteps == 0) {
-      lastSensorSteps = event.steps;
-    }
-
-    int diff = event.steps - lastSensorSteps;
-
-    if (diff < 0) {
-      lastSensorSteps = event.steps;
+      lastSensorSteps = sensorSteps;
+      _saveLocalData();
       return;
     }
 
-    if (diff > 0) {
+    // إذا عداد الحساس رجع للخلف،
+    // نحافظ على خطوات المستخدم كما هي.
+    if (sensorSteps < lastSensorSteps) {
+      lastSensorSteps = sensorSteps;
+      _saveLocalData();
+      return;
+    }
 
-      int newSteps = max(
-        steps,
-        (steps + diff).clamp(0, maxSteps),
-      );
+    final int diff = sensorSteps - lastSensorSteps;
 
-      int newCoins = (newSteps ~/ stepPerCoin) * 50;
+    if (diff == 0) return;
 
-      if (!mounted) return;
+    final int newSteps =
+    (steps + diff).clamp(0, maxSteps);
 
-      setState(() {
-        steps = newSteps;
+    final int newCoins =
+        (newSteps ~/ stepPerCoin) * 50;
 
-        if (newCoins > coins) {
-          coins = newCoins;
-        }
-      });
+    setState(() {
+      steps = newSteps;
+      coins = newCoins;
+    });
 
-      lastSensorSteps = event.steps;
+    lastSensorSteps = sensorSteps;
 
-      _debounce?.cancel();
+    _debounce?.cancel();
 
-      _debounce = Timer(const Duration(seconds: 5), () async {
-
+    _debounce = Timer(
+      const Duration(seconds: 5),
+          () async {
         if (!mounted) return;
 
         await _saveLocalData();
         await _updateFirebase();
-      });
-    }
+      },
+    );
   }
+
 
   void onStepError(Object error) {
     debugPrint("Step Error: $error");
@@ -445,7 +450,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
     final adsToday = adsWatchedCount;
 
-    if (adsToday < 30 &&
+    if (adsToday < 100 &&
         _isInterstitialReady &&
         (lastAdTime == null ||
             DateTime.now().difference(lastAdTime!).inSeconds > 20)) {
@@ -567,7 +572,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     );
   }
 
-
   void _showCongratulationScreen() {
     if (!mounted) return;
 
@@ -576,20 +580,116 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       MaterialPageRoute(
         builder: (_) => CongratulationScreen(
           onRewardCollected: () async {
-
             const int reward = 100;
 
-            setState(() {
-              totalCoins += reward;
-              adsWatchedCount++;
-            });
+            // حماية من تنفيذ المكافأة مرتين
+            if (_isCollectingReward) return;
 
-            await userDoc.set({
-              'totalCoins': totalCoins,
-              'adsWatchedToday': adsWatchedCount,
-              'adsDate': getTodayKey(),
-            }, SetOptions(merge: true));
+            _isCollectingReward = true;
 
+            try {
+              bool success = false;
+              int? finalTotalCoins;
+              int? finalAdsCount;
+
+              // محاولة العملية حتى 3 مرات في حالة وجود انقطاع مؤقت
+              for (int attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  await FirebaseFirestore.instance.runTransaction(
+                        (transaction) async {
+                      final snapshot = await transaction.get(userDoc);
+
+                      if (!snapshot.exists) {
+                        throw Exception(
+                          'User document does not exist',
+                        );
+                      }
+
+                      final data =
+                      snapshot.data() as Map<String, dynamic>;
+
+                      final int firebaseTotal =
+                      (data['totalCoins'] ?? 0) as int;
+
+                      final int currentAds =
+                      (data['adsWatchedToday'] ?? 0) as int;
+
+                      final int newTotal =
+                          firebaseTotal + reward;
+
+                      final int newAdsCount =
+                          currentAds + 1;
+
+                      transaction.set(
+                        userDoc,
+                        {
+                          'totalCoins': newTotal,
+                          'adsWatchedToday': newAdsCount,
+                          'adsDate': getTodayKey(),
+                        },
+                        SetOptions(merge: true),
+                      );
+
+                      // نحفظ القيم فقط، ولا نعمل setState هنا
+                      finalTotalCoins = newTotal;
+                      finalAdsCount = newAdsCount;
+                    },
+                  );
+
+                  success = true;
+                  break;
+                } on FirebaseException catch (e) {
+                  debugPrint(
+                    'Reward transaction attempt $attempt failed: '
+                        '${e.code} - ${e.message}',
+                  );
+
+                  if (e.code == 'unavailable' ||
+                      e.code == 'deadline-exceeded' ||
+                      e.code == 'aborted') {
+                    if (attempt < 3) {
+                      await Future.delayed(
+                        Duration(seconds: attempt * 2),
+                      );
+                      continue;
+                    }
+                  }
+
+                  break;
+                } catch (e) {
+                  debugPrint(
+                    'Reward transaction error: $e',
+                  );
+                  break;
+                }
+              }
+
+              if (success &&
+                  finalTotalCoins != null &&
+                  finalAdsCount != null) {
+
+                if (mounted) {
+                  setState(() {
+                    totalCoins = finalTotalCoins!;
+                    adsWatchedCount = finalAdsCount!;
+                  });
+                }
+
+                await _saveLocalData();
+              } else {
+                if (!mounted) return;
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Connection problem. Please try again.',
+                    ),
+                  ),
+                );
+              }
+            } finally {
+              _isCollectingReward = false;
+            }
           },
         ),
       ),
@@ -1089,6 +1189,7 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
                 if (_adWatched)
                   ElevatedButton(
                     onPressed: () async {
+                      if (_showCollectAnimation) return;
 
                       setState(() {
                         _showCollectAnimation = true;
