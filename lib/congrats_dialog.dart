@@ -23,6 +23,18 @@ class _CongratulationScreenState extends State<CongratulationScreen>
   RewardedAd? _rewardedAd;
   bool _isAdLoading = false;
   bool _adWatched = false;
+  bool _rewardEarned = false;
+
+  DateTime? _lastRewardedLoadAttempt;
+
+  bool _canRequestRewardedLoad() {
+    if (_lastRewardedLoadAttempt == null) return true;
+
+    return DateTime.now()
+        .difference(_lastRewardedLoadAttempt!)
+        .inSeconds >=
+        10;
+  }
 
   BannerAd? _bannerAd;
   bool _isBannerReady = false;
@@ -67,25 +79,62 @@ class _CongratulationScreenState extends State<CongratulationScreen>
 
   // ==============  =================
   void _loadRewardedAd() {
-    if (_isAdLoading) return;
+    // يوجد إعلان جاهز
+    if (_rewardedAd != null) {
+      return;
+    }
+
+    // يوجد طلب تحميل حالي
+    if (_isAdLoading) {
+      return;
+    }
+
+    // منع إرسال Requests متقاربة جدًا
+    if (!_canRequestRewardedLoad()) {
+      return;
+    }
+
+    // تسجيل وقت آخر محاولة تحميل
+    _lastRewardedLoadAttempt = DateTime.now();
 
     _isAdLoading = true;
+
+    debugPrint('REWARDED: Requesting ad...');
 
     RewardedAd.load(
       adUnitId: 'ca-app-pub-5925712456846655/9841768010',
       request: const AdRequest(),
+
       rewardedAdLoadCallback: RewardedAdLoadCallback(
         onAdLoaded: (ad) {
-          _rewardedAd = ad;
           _isAdLoading = false;
-          if (!mounted) return;
-          setState(() {});
+
+          // التخلص من أي إعلان قديم بالخطأ
+          _rewardedAd?.dispose();
+
+          _rewardedAd = ad;
+
+          debugPrint('REWARDED: Ad loaded successfully');
+
+          if (mounted) {
+            setState(() {});
+          }
         },
+
         onAdFailedToLoad: (error) {
           _isAdLoading = false;
           _rewardedAd = null;
-          Future.delayed(const Duration(seconds: 5), () {
-            if (mounted) {
+
+          debugPrint(
+            'REWARDED: Failed to load '
+                '${error.code} - ${error.message}',
+          );
+
+          // Retry بعد 45 ثانية فقط
+          Future.delayed(const Duration(seconds: 45), () {
+            if (!mounted) return;
+
+            if (_rewardedAd == null && !_isAdLoading) {
               _loadRewardedAd();
             }
           });
@@ -110,8 +159,17 @@ class _CongratulationScreenState extends State<CongratulationScreen>
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
 
-          Future.delayed(const Duration(seconds: 5), () {
-            if (mounted) {
+          _isBannerReady = false;
+
+          debugPrint(
+            'BANNER: Failed to load '
+                '${error.code} - ${error.message}',
+          );
+
+          Future.delayed(const Duration(seconds: 45), () {
+            if (!mounted) return;
+
+            if (!_isBannerReady && _bannerAd == null) {
               _loadBannerAd();
             }
           });
@@ -122,32 +180,86 @@ class _CongratulationScreenState extends State<CongratulationScreen>
 
   // =================  =================
   void _showAd() {
-    if (_rewardedAd == null) return;
+    final ad = _rewardedAd;
 
-    _rewardedAd!.fullScreenContentCallback = FullScreenContentCallback(
-      onAdDismissedFullScreenContent: (ad) async {
+    // لا يوجد إعلان جاهز
+    if (ad == null) {
+      debugPrint('REWARDED: No ad ready');
+
+      if (!_isAdLoading) {
+        _loadRewardedAd();
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Ad is preparing. Please try again shortly.',
+            ),
+          ),
+        );
+      }
+
+      return;
+    }
+
+    // إزالة الإعلان قبل عرضه
+    _rewardedAd = null;
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    ad.fullScreenContentCallback =
+        FullScreenContentCallback(
+
+          onAdShowedFullScreenContent: (ad) {
+            debugPrint('REWARDED: Ad showed');
+          },
+
+          onAdDismissedFullScreenContent: (ad) {
+            debugPrint('REWARDED: Ad dismissed');
+
+            ad.dispose();
+
+            // تجهيز إعلان واحد للمشاهدة القادمة
+            _loadRewardedAd();
+          },
+
+          onAdFailedToShowFullScreenContent: (ad, error) {
+            debugPrint(
+              'REWARDED: Failed to show '
+                  '${error.code} - ${error.message}',
+            );
+
+            ad.dispose();
+
+            // تجهيز إعلان واحد جديد
+            _loadRewardedAd();
+          },
+        );
+
+    ad.show(
+      onUserEarnedReward: (ad, reward) {
+        if (_rewardEarned) return;
+
+        _rewardEarned = true;
+
+        debugPrint(
+          'REWARDED: User earned '
+              '${reward.amount} ${reward.type}',
+        );
+
+        if (!mounted) return;
+
         setState(() {
           _adWatched = true;
         });
 
-
         _centerConfetti.play();
         _leftConfetti.play();
         _rightConfetti.play();
-
-        ad.dispose();
-        _rewardedAd = null;
-        _loadRewardedAd();
       },
-      onAdFailedToShowFullScreenContent: (ad, error) {
-        ad.dispose();
-        _rewardedAd = null;
-        _loadRewardedAd();
-      },
-    );
-
-    _rewardedAd!.show(
-      onUserEarnedReward: (ad, reward) {},
     );
   }
 

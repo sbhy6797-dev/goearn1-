@@ -381,42 +381,96 @@ class _MyAppState extends State {
   late StreamSubscription<User?> _authSub;
   StreamSubscription<RemoteMessage>? _fcmSub;
 
-
   void initFCMListener() {
     if (_fcmListenerAdded) return;
     _fcmListenerAdded = true;
 
     _fcmSub = FirebaseMessaging.onMessage.listen((message) async {
-
       try {
         final notification = message.notification;
-        if (notification == null) return;
+
+        if (notification == null) {
+          return;
+        }
 
         final currentUser = FirebaseAuth.instance.currentUser;
+
         if (currentUser == null) {
-          debugPrint("No user logged in");
+          debugPrint('FCM: No user logged in');
           return;
         }
 
         final uid = currentUser.uid;
-        final title = notification.title ?? "Notification";
-        final body = notification.body ?? "";
-        await _saveNotification(uid, title, body);
-        final snapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .collection('notifications')
-            .limit(50)
-            .get();
 
-        if (snapshot.docs.length > 40) {
-          for (var doc in snapshot.docs.skip(30)) {
-            await doc.reference.delete();
+        final title = notification.title ?? 'Notification';
+        final body = notification.body ?? '';
+
+        // حفظ الإشعار
+        try {
+          await _saveNotification(uid, title, body);
+        } on FirebaseException catch (e) {
+          debugPrint(
+            'FCM save notification failed: ${e.code}',
+          );
+
+          // لا تسجل أخطاء Firestore المؤقتة كـ Crashlytics
+          if (e.code != 'permission-denied' &&
+              e.code != 'unavailable') {
+            await FirebaseCrashlytics.instance.recordError(
+              e,
+              StackTrace.current,
+              fatal: false,
+            );
           }
+
+          return;
+        } catch (e, stack) {
+          debugPrint('FCM save error: $e');
+
+          await FirebaseCrashlytics.instance.recordError(
+            e,
+            stack,
+            fatal: false,
+          );
+
+          return;
+        }
+
+        // تنظيف الإشعارات القديمة
+        try {
+          final snapshot = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(uid)
+              .collection('notifications')
+              .limit(50)
+              .get();
+
+          if (snapshot.docs.length > 40) {
+            final oldDocs = snapshot.docs.skip(30).toList();
+
+            // Batch أفضل من حذف كل document لوحده
+            final batch = FirebaseFirestore.instance.batch();
+
+            for (final doc in oldDocs) {
+              batch.delete(doc.reference);
+            }
+
+            await batch.commit();
+          }
+        } on FirebaseException catch (e) {
+          debugPrint(
+            'FCM cleanup failed: ${e.code}',
+          );
+
+          // لا تجعل مشكلة تنظيف الإشعارات تؤثر على التطبيق
+          return;
+        } catch (e) {
+          debugPrint('FCM cleanup error: $e');
+          return;
         }
 
       } catch (e, stack) {
-        debugPrint("FCM error: $e");
+        debugPrint('FCM listener error: $e');
 
         await FirebaseCrashlytics.instance.recordError(
           e,
@@ -427,7 +481,11 @@ class _MyAppState extends State {
     });
   }
 
-  Future<void> _saveNotification(String uid, String title, String body) async {
+  Future<void> _saveNotification(
+      String uid,
+      String title,
+      String body,
+      ) async {
     try {
       await FirebaseFirestore.instance
           .collection('users')
@@ -439,14 +497,39 @@ class _MyAppState extends State {
         'createdAt': FieldValue.serverTimestamp(),
         'read': false,
       });
+    } on FirebaseException catch (e, stack) {
+      debugPrint(
+        'Save notification failed: ${e.code} - ${e.message}',
+      );
+
+      // أخطاء Firestore المتوقعة/المؤقتة:
+      // لا تسجلها في Crashlytics
+      if (e.code == 'permission-denied' ||
+          e.code == 'unavailable' ||
+          e.code == 'network-request-failed' ||
+          e.code == 'deadline-exceeded') {
+        rethrow;
+      }
+
+      // الأخطاء غير المتوقعة فقط
+      await FirebaseCrashlytics.instance.recordError(
+        e,
+        stack,
+        fatal: false,
+        reason: 'Save notification Firestore error',
+      );
+
+      rethrow;
     } catch (e, stack) {
-      debugPrint("Firestore error: $e");
+      debugPrint('Save notification unknown error: $e');
 
       await FirebaseCrashlytics.instance.recordError(
         e,
         stack,
         fatal: false,
       );
+
+      rethrow;
     }
   }
 
@@ -531,7 +614,7 @@ class _MyAppState extends State {
   }
 
 
-  Future _loadSteps(User? user) async {
+  Future<void> _loadSteps(User? user) async {
     if (user == null) return;
 
     try {
@@ -552,34 +635,46 @@ class _MyAppState extends State {
 
       if (data == null) return;
 
-      stepsToday = (data['steps'] as num?)?.toInt() ?? 0;
-      _startSteps = (data['initialSteps'] as num?)?.toInt() ?? 0;
+      stepsToday =
+          (data['steps'] as num?)?.toInt() ?? 0;
+
+      _startSteps =
+          (data['initialSteps'] as num?)?.toInt() ?? 0;
 
       debugPrint("LOADED stepsToday = $stepsToday");
       debugPrint("LOADED startSteps = $_startSteps");
 
+    } on TimeoutException catch (e) {
+      debugPrint("LOAD STEPS TIMEOUT: $e");
+      return;
+
     } on FirebaseException catch (e, stack) {
+      debugPrint(
+        "LOAD STEPS FIRESTORE ERROR: "
+            "${e.code} - ${e.message}",
+      );
 
-      debugPrint("Firestore error: ${e.code}");
-
-      // أخطاء طبيعية لا نرسلها إلى Crashlytics
       if (e.code == 'permission-denied' ||
           e.code == 'unavailable' ||
-          e.code == 'network-request-failed') {
+          e.code == 'network-request-failed' ||
+          e.code == 'deadline-exceeded') {
         return;
       }
 
       await FirebaseCrashlytics.instance.recordError(
         e,
         stack,
+        reason: 'Load steps Firestore error: ${e.code}',
         fatal: false,
       );
 
     } catch (e, stack) {
+      debugPrint("LOAD STEPS UNKNOWN ERROR: $e");
 
       await FirebaseCrashlytics.instance.recordError(
         e,
         stack,
+        reason: 'Load steps unknown error',
         fatal: false,
       );
     }
@@ -594,10 +689,10 @@ class _MyAppState extends State {
       if (!mounted) return;
 
       // ================= UPDATE CHECK =================
-      final updateCompleted = await checkForUpdate();
+       final updateCompleted = await checkForUpdate();
 
       if (!mounted || !updateCompleted) {
-        return;
+       return;
       }
 
       // ================= AUTH =================

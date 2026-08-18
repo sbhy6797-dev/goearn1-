@@ -450,12 +450,15 @@ Privacy policy terms
     }
   }
 
-  // ✅ Terms & Conditions Dialog
+  // ✅ Terms & Conditions Dialog - Safe Version
   void _showTermsAndConditions() {
+    if (!mounted) return;
+
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Terms & Conditions'),
+
         content: const SingleChildScrollView(
           child: Text(
             """
@@ -510,6 +513,7 @@ Coins are used for:
 Unlocking rewards
 Promotional redemption
 In-app benefits
+
 4. Rewards & Withdrawals
 
 Users may request rewards using earned coins.
@@ -572,6 +576,7 @@ Violation may result in:
 Reward removal
 Account suspension
 Account termination
+
 8. Account Suspension or Termination
 
 We reserve the right to suspend or terminate accounts for:
@@ -586,6 +591,7 @@ Suspended accounts may lose:
 Coins
 Rewards
 Withdraw eligibility
+
 9. Limitation of Liability
 
 GoEarn1 is provided "as is" without warranties.
@@ -637,6 +643,7 @@ To use rewards:
 Minimum coin threshold may apply
 Processing time may vary
 One account per user allowed
+
 14. Age Requirement
 
 Users must be:
@@ -659,12 +666,17 @@ By using GoEarn1, you confirm that you:
 Read these Terms
 Understand these Terms
 Agree to these Terms
-            """,
+          """,
           ),
         ),
+
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              if (Navigator.of(dialogContext).canPop()) {
+                Navigator.of(dialogContext).pop();
+              }
+            },
             child: const Text('Close'),
           ),
         ],

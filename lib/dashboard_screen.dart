@@ -10,6 +10,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'lucky_spin_screen.dart';
 import 'main.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 // ================= Dashboard Screen =================
 class DashboardScreen extends StatefulWidget {
   final int totalCoins;
@@ -96,27 +97,76 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 // ===== Interstitial Ad =====
   InterstitialAd? _interstitialAd;
   bool _isInterstitialReady = false;
-
+  bool _isInterstitialLoading = false;
 // ===== Banner Ad =====
   BannerAd? _bannerAd;
   bool _isBannerReady = false;
 
 
   Future<void> addRewardedCoins() async {
-
     const int reward = 100;
 
-    setState(() {
-      totalCoins += reward;
-      adsWatchedCount++;
-    });
+    try {
+      final result = await FirebaseFirestore.instance.runTransaction(
+            (transaction) async {
+          final snapshot = await transaction.get(userDoc);
 
-    await userDoc.set({
-      'totalCoins': totalCoins,
-      'adsWatchedToday': adsWatchedCount,
-      'adsDate': getTodayKey(),
-    }, SetOptions(merge: true));
+          if (!snapshot.exists) {
+            throw Exception('User document does not exist');
+          }
 
+          final data = snapshot.data() as Map<String, dynamic>;
+
+          final int firebaseTotal =
+              (data['totalCoins'] as num?)?.toInt() ?? 0;
+
+          final int currentAds =
+              (data['adsWatchedToday'] as num?)?.toInt() ?? 0;
+
+          final int newTotalCoins =
+              firebaseTotal + reward;
+
+          final int newAdsCount =
+              currentAds + 1;
+
+          transaction.set(
+            userDoc,
+            {
+              'totalCoins': newTotalCoins,
+              'adsWatchedToday': newAdsCount,
+              'adsDate': getTodayKey(),
+              'lastUpdate': FieldValue.serverTimestamp(),
+            },
+            SetOptions(merge: true),
+          );
+
+          return {
+            'totalCoins': newTotalCoins,
+            'adsWatchedToday': newAdsCount,
+          };
+        },
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        totalCoins = result['totalCoins'] as int;
+        adsWatchedCount = result['adsWatchedToday'] as int;
+      });
+
+      await _saveLocalData();
+
+    } catch (e) {
+      debugPrint('addRewardedCoins error: $e');
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save your reward. Please try again.'),
+        ),
+      );
+    }
   }
 
   @override
@@ -139,8 +189,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     });
 
     _loadLocalData();
-
-    totalCoins = widget.totalCoins;
 
     initApp();
 
@@ -193,10 +241,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       initPedometer();
     });
 
-    Future.delayed(const Duration(seconds: 1), () {
-      _loadInterstitial();
-    });
-
     Future.delayed(const Duration(seconds: 2), () {
       if (!mounted) return;
       _showCongratulationScreen();
@@ -204,19 +248,50 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   }
 
   void _loadInterstitial() {
+    // يوجد إعلان جاهز بالفعل
+    if (_interstitialAd != null) return;
+
+    // يوجد طلب تحميل جارٍ بالفعل
+    if (_isInterstitialLoading) return;
+
+    _isInterstitialLoading = true;
+
+    debugPrint('INTERSTITIAL: Loading ad...');
+
     InterstitialAd.load(
       adUnitId: 'ca-app-pub-5925712456846655/5052040996',
       request: const AdRequest(),
       adLoadCallback: InterstitialAdLoadCallback(
+
         onAdLoaded: (ad) {
+          _isInterstitialLoading = false;
+
+          _interstitialAd?.dispose();
+
           _interstitialAd = ad;
           _isInterstitialReady = true;
-          setState(() {});
+
+          debugPrint('INTERSTITIAL: Ad loaded successfully');
+
+          if (mounted) {
+            setState(() {});
+          }
         },
+
         onAdFailedToLoad: (error) {
+          _isInterstitialLoading = false;
           _isInterstitialReady = false;
 
-          Future.delayed(const Duration(seconds: 3), () {
+          debugPrint(
+            'INTERSTITIAL: Failed to load '
+                '${error.code} - ${error.message}',
+          );
+
+          // لا نطلب كل 3 ثواني.
+          // محاولة واحدة بعد 30 ثانية.
+          Future.delayed(const Duration(seconds: 30), () {
+            if (!mounted) return;
+
             _loadInterstitial();
           });
         },
@@ -298,40 +373,81 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   Future<void> loadData() async {
     try {
       final snapshot = await userDoc.get();
-      if (snapshot.exists) {
-        final data = snapshot.data() as Map<String, dynamic>;
 
-        // ================= ADS LOGIC  =================
-        final todayKey = getTodayKey();
-        final savedDate = data['adsDate'];
-
-        int adsCount = data['adsWatchedToday'] ?? 0;
-
-        if (savedDate != todayKey) {
-          adsCount = 0;
-
-          await userDoc.set({
-            'adsWatchedToday': 0,
-            'adsDate': todayKey,
-          }, SetOptions(merge: true));
-        }
-
-        // ================= STATE UPDATE =================
-
-        if (!mounted) return;
-        setState(() {
-          steps = data['steps'] ?? 0;
-          coins = data['coins'] ?? 0;
-          totalCoins = data['totalCoins'] ?? widget.totalCoins;
-          initialSteps = data['initialSteps'] ?? 0;
-          isFirstUpdate = data['isFirstUpdate'] ?? true;
-
-          adsWatchedCount = adsCount;
-        });
-
+      if (!snapshot.exists) {
+        debugPrint('User document does not exist');
+        return;
       }
-    } catch (e) {
+
+      final data = snapshot.data() as Map<String, dynamic>;
+
+      final todayKey = getTodayKey();
+
+      final savedDate = data['adsDate']?.toString();
+
+      int adsCount =
+          (data['adsWatchedToday'] as num?)?.toInt() ?? 0;
+
+      if (savedDate != todayKey) {
+        adsCount = 0;
+
+        await userDoc.set({
+          'adsWatchedToday': 0,
+          'adsDate': todayKey,
+        }, SetOptions(merge: true));
+      }
+
+      final int firebaseSteps =
+          (data['steps'] as num?)?.toInt() ?? 0;
+
+      final int firebaseCoins =
+          (data['coins'] as num?)?.toInt() ?? 0;
+
+      final int firebaseTotalCoins =
+          (data['totalCoins'] as num?)?.toInt() ?? 0;
+
+      final int firebaseInitialSteps =
+          (data['initialSteps'] as num?)?.toInt() ?? 0;
+
+      final bool firebaseIsFirstUpdate =
+          data['isFirstUpdate'] as bool? ?? true;
+
+      if (!mounted) return;
+
+      setState(() {
+        steps = firebaseSteps;
+        coins = firebaseCoins;
+
+        // ⭐ Firestore هو المصدر الأساسي
+        totalCoins = firebaseTotalCoins;
+
+        initialSteps = firebaseInitialSteps;
+        isFirstUpdate = firebaseIsFirstUpdate;
+
+        adsWatchedCount = adsCount;
+      });
+
+      // نحفظ آخر قيمة صحيحة محليًا فقط كنسخة احتياطية
+      await _saveLocalData();
+
+      debugPrint(
+        'FIRESTORE LOADED: '
+            'steps=$steps '
+            'coins=$coins '
+            'totalCoins=$totalCoins',
+      );
+
+    } catch (e, stack) {
       debugPrint('Error loading Firebase data: $e');
+
+      // لا نستبدل totalCoins بقيمة قديمة إذا فشل Firestore
+      try {
+        await FirebaseCrashlytics.instance.recordError(
+          e,
+          stack,
+          fatal: false,
+        );
+      } catch (_) {}
     }
   }
 
@@ -433,50 +549,143 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   }
 
   Future<void> convertCoins() async {
-    if (coins == 0) return;
+    if (coins <= 0) return;
 
-    setState(() {
-      totalCoins += coins;
-      coins = 0;
-      steps = 0;
-      initialSteps = 0;
-      isFirstUpdate = true;
-    });
+    final int coinsToAdd = coins;
 
-    await _saveLocalData();
-    await _updateFirebase();
+    try {
+      final result = await FirebaseFirestore.instance.runTransaction(
+            (transaction) async {
+          final snapshot = await transaction.get(userDoc);
 
-    tryShowAd();
+          if (!snapshot.exists) {
+            throw Exception('User document does not exist');
+          }
 
-    final adsToday = adsWatchedCount;
+          final data = snapshot.data() as Map<String, dynamic>;
 
-    if (adsToday < 100 &&
-        _isInterstitialReady &&
-        (lastAdTime == null ||
-            DateTime.now().difference(lastAdTime!).inSeconds > 20)) {
+          final int firebaseTotal =
+              (data['totalCoins'] as num?)?.toInt() ?? 0;
 
-      lastAdTime = DateTime.now();
+          final int newTotalCoins =
+              firebaseTotal + coinsToAdd;
 
-      Future.delayed(const Duration(milliseconds: 500), () {
-        _showInterstitial();
+          transaction.set(
+            userDoc,
+            {
+              'totalCoins': newTotalCoins,
+              'coins': 0,
+              'steps': 0,
+              'initialSteps': 0,
+              'isFirstUpdate': true,
+              'lastUpdate': FieldValue.serverTimestamp(),
+            },
+            SetOptions(merge: true),
+          );
+
+          return newTotalCoins;
+        },
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        totalCoins = result;
+        coins = 0;
+        steps = 0;
+        initialSteps = 0;
+        isFirstUpdate = true;
       });
+
+      // حفظ آخر قيمة محليًا بعد نجاح Firebase فقط
+      await _saveLocalData();
+
+      // إعلان Interstitial
+      if (adsWatchedCount < 100 &&
+          _isInterstitialReady &&
+          (lastAdTime == null ||
+              DateTime.now()
+                  .difference(lastAdTime!)
+                  .inSeconds >
+                  20)) {
+        lastAdTime = DateTime.now();
+
+        Future.delayed(
+          const Duration(milliseconds: 500),
+              () {
+            if (mounted) {
+              _showInterstitial();
+            }
+          },
+        );
+      }
+    } catch (e, stack) {
+      debugPrint('Convert coins error: $e');
+
+      try {
+        await FirebaseCrashlytics.instance.recordError(
+          e,
+          stack,
+          fatal: false,
+        );
+      } catch (_) {}
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not save your coins. Please try again.',
+          ),
+        ),
+      );
     }
   }
 
   Future<void> _updateFirebase() async {
     try {
       final snapshot = await userDoc.get();
-      final data = snapshot.data() as Map<String, dynamic>?;
 
-      final oldTotal = data?['totalCoins'] ?? 0;
+      if (!snapshot.exists) {
+        debugPrint('User document does not exist');
+        return;
+      }
 
-      final safeTotal = totalCoins < oldTotal ? oldTotal : totalCoins;
+      final data = snapshot.data() as Map<String, dynamic>;
+
+      final int firestoreTotalCoins =
+          (data['totalCoins'] as num?)?.toInt() ?? 0;
+
+      // ⭐ ممنوع ننقص totalCoins
+      final int safeTotalCoins =
+      totalCoins < firestoreTotalCoins
+          ? firestoreTotalCoins
+          : totalCoins;
+
+      // لو Firestore عنده قيمة أكبر،
+      // نحدث الشاشة بالقيمة الصحيحة
+      if (mounted && safeTotalCoins != totalCoins) {
+        setState(() {
+          totalCoins = safeTotalCoins;
+        });
+      }
 
       await userDoc.set({
-        'totalCoins': safeTotal,
+        'totalCoins': safeTotalCoins,
         'steps': steps,
         'coins': coins,
+        'lastUpdate': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+
+      // نحفظ نفس القيمة الصحيحة محليًا
+      await _saveLocalData();
+
+      debugPrint(
+        'FIREBASE SAVED: '
+            'totalCoins=$safeTotalCoins '
+            'steps=$steps '
+            'coins=$coins',
+      );
 
     } catch (e) {
       debugPrint('Error updating Firebase: $e');
@@ -494,18 +703,47 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   }
 
   Future<void> _loadLocalData() async {
-    final prefs = await SharedPreferences.getInstance();
-    lastSensorSteps = prefs.getInt('lastSensorSteps') ?? 0;
+    try {
+      final prefs = await SharedPreferences.getInstance();
 
-    if (!mounted) return;
+      lastSensorSteps =
+          prefs.getInt('lastSensorSteps') ?? 0;
 
-    setState(() {
-      steps = prefs.getInt('steps') ?? 0;
-      coins = prefs.getInt('coins') ?? 0;
-      totalCoins = prefs.getInt('totalCoins') ?? totalCoins;
-      initialSteps = prefs.getInt('initialSteps') ?? 0;
-      isFirstUpdate = prefs.getBool('isFirstUpdate') ?? true;
-    });
+      final localSteps =
+          prefs.getInt('steps') ?? 0;
+
+      final localCoins =
+          prefs.getInt('coins') ?? 0;
+
+      final localInitialSteps =
+          prefs.getInt('initialSteps') ?? 0;
+
+      final localIsFirstUpdate =
+          prefs.getBool('isFirstUpdate') ?? true;
+
+      if (!mounted) return;
+
+      setState(() {
+        steps = localSteps;
+        coins = localCoins;
+
+        // ✅ لا نقرأ totalCoins من SharedPreferences هنا.
+        // Firestore هو المصدر الأساسي لـ totalCoins.
+
+        initialSteps = localInitialSteps;
+        isFirstUpdate = localIsFirstUpdate;
+      });
+
+      debugPrint(
+        'LOCAL DATA: '
+            'steps=$steps '
+            'coins=$coins '
+            'totalCoins=$totalCoins',
+      );
+
+    } catch (e) {
+      debugPrint('Error loading local data: $e');
+    }
   }
 
 
@@ -552,20 +790,135 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   void showLuckySpin() {
     if (!mounted) return;
 
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please sign in again.'),
+        ),
+      );
+      return;
+    }
+
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => LuckySpinScreen(
           onRewardCollected: (reward) async {
+            try {
+              final currentUser = FirebaseAuth.instance.currentUser;
 
-            setState(() {
-              totalCoins += reward;
-            });
+              if (currentUser == null) {
+                if (!mounted) return;
 
-            await userDoc.set({
-              'totalCoins': totalCoins,
-            }, SetOptions(merge: true));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please sign in again.'),
+                  ),
+                );
 
+                return;
+              }
+
+              final docRef = FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(currentUser.uid);
+
+              // حفظ المكافأة مباشرة في Firestore
+              await docRef.set(
+                {
+                  'totalCoins': FieldValue.increment(reward),
+                  'lastUpdate': FieldValue.serverTimestamp(),
+                },
+                SetOptions(merge: true),
+              ).timeout(
+                const Duration(seconds: 10),
+              );
+
+              // قراءة القيمة النهائية من Firestore
+              final snapshot = await docRef.get();
+
+              if (!snapshot.exists) return;
+
+              final data =
+              snapshot.data() as Map<String, dynamic>;
+
+              final firebaseTotal =
+                  (data['totalCoins'] as num?)?.toInt() ?? 0;
+
+              if (!mounted) return;
+
+              setState(() {
+                totalCoins = firebaseTotal;
+              });
+
+              // حفظ نسخة محلية بعد نجاح Firestore
+              await _saveLocalData();
+
+            } on FirebaseException catch (e, stack) {
+              debugPrint(
+                'LuckySpin Firestore error: '
+                    '${e.code} - ${e.message}',
+              );
+
+              // لا نسجل أخطاء الاتصال/الصلاحيات كـ Crashlytics fatal
+              if (e.code != 'permission-denied' &&
+                  e.code != 'unavailable' &&
+                  e.code != 'deadline-exceeded') {
+                await FirebaseCrashlytics.instance.recordError(
+                  e,
+                  stack,
+                  reason: 'LuckySpin Firestore error: ${e.code}',
+                  fatal: false,
+                );
+              }
+
+              if (!mounted) return;
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    e.code == 'permission-denied'
+                        ? 'Unable to save reward. Please sign in again.'
+                        : 'Connection problem. Please try again.',
+                  ),
+                ),
+              );
+
+            } on TimeoutException catch (e) {
+              debugPrint('LuckySpin timeout: $e');
+
+              if (!mounted) return;
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Connection is slow. Please try again.',
+                  ),
+                ),
+              );
+
+            } catch (e, stack) {
+              debugPrint('LuckySpin unknown error: $e');
+
+              await FirebaseCrashlytics.instance.recordError(
+                e,
+                stack,
+                reason: 'LuckySpin unknown error',
+                fatal: false,
+              );
+
+              if (!mounted) return;
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Could not save your reward. Please try again.',
+                  ),
+                ),
+              );
+            }
           },
         ),
       ),
@@ -609,10 +962,10 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                       snapshot.data() as Map<String, dynamic>;
 
                       final int firebaseTotal =
-                      (data['totalCoins'] ?? 0) as int;
+                          (data['totalCoins'] as num?)?.toInt() ?? 0;
 
                       final int currentAds =
-                      (data['adsWatchedToday'] ?? 0) as int;
+                          (data['adsWatchedToday'] as num?)?.toInt() ?? 0;
 
                       final int newTotal =
                           firebaseTotal + reward;
@@ -984,33 +1337,63 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
   RewardedAd? _rewardedAd;
   bool _isAdLoading = false;
   bool _adWatched = false;
+
+
+  DateTime? _lastRewardedLoadAttempt;
+
+  bool _canRequestRewardedLoad() {
+    if (_lastRewardedLoadAttempt == null) return true;
+
+    return DateTime.now()
+        .difference(_lastRewardedLoadAttempt!)
+        .inSeconds >=
+        10;
+  }
+
+
   BannerAd? _bannerAd;
   bool _isBannerReady = false;
+
   bool _showCollectAnimation = false;
+
   @override
   void initState() {
     super.initState();
 
     Future.delayed(const Duration(seconds: 2), () {
+      if (!mounted) return;
+
       _loadRewardedAd();
       _loadBannerAd();
     });
   }
 
   void _loadRewardedAd() {
+    if (_rewardedAd != null) return;
+
     if (_isAdLoading) return;
+
+    if (!_canRequestRewardedLoad()) return;
+
+    _lastRewardedLoadAttempt = DateTime.now();
     _isAdLoading = true;
+
+    debugPrint('REWARDED: Loading ad...');
 
     RewardedAd.load(
       adUnitId: 'ca-app-pub-5925712456846655/9841768010',
       request: const AdRequest(),
+
       rewardedAdLoadCallback: RewardedAdLoadCallback(
         onAdLoaded: (ad) {
-          _rewardedAd = ad;
           _isAdLoading = false;
 
-          if (mounted) {
+          _rewardedAd?.dispose();
+          _rewardedAd = ad;
 
+          debugPrint('REWARDED: Ad loaded successfully');
+
+          if (mounted) {
             setState(() {});
           }
         },
@@ -1018,12 +1401,10 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
         onAdFailedToLoad: (error) {
           _isAdLoading = false;
 
-
-          Future.delayed(const Duration(seconds: 5), () {
-            if (mounted) {
-              _loadRewardedAd();
-            }
-          });
+          debugPrint(
+            'REWARDED: Failed to load '
+                '${error.code} - ${error.message}',
+          );
         },
       ),
     );
@@ -1055,7 +1436,7 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
           });
 
 
-          Future.delayed(const Duration(seconds: 5), () {
+          Future.delayed(const Duration(seconds: 30), () {
             if (mounted) _loadBannerAd();
           });
         },
@@ -1066,12 +1447,78 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
   }
 
   void _showAd() {
-    if (_rewardedAd == null) return;
+    // لو الإعلان بيتحمّل حاليًا، لا تعمل طلب جديد
+    if (_isAdLoading) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The ad is still loading. Please wait.'),
+        ),
+      );
+      return;
+    }
 
-    _rewardedAd!.show(
+    // حفظ الإعلان الحالي في متغير مؤقت
+    final ad = _rewardedAd;
+
+    // لا يوجد إعلان جاهز
+    if (ad == null) {
+      // اعمل Load واحد فقط
+      _loadRewardedAd();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ad is preparing. Please try again.'),
+        ),
+      );
+
+      return;
+    }
+
+    // الإعلان سيتم استخدامه الآن
+    // نزيله حتى لا يتم عرضه مرتين
+    _rewardedAd = null;
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    ad.fullScreenContentCallback = FullScreenContentCallback(
+
+      onAdShowedFullScreenContent: (ad) {
+        debugPrint('REWARDED: Ad showed');
+      },
+
+      onAdDismissedFullScreenContent: (ad) {
+        debugPrint('REWARDED: Ad dismissed');
+
+        ad.dispose();
+
+        // تجهيز إعلان واحد فقط للمرة القادمة
+        _loadRewardedAd();
+      },
+
+      onAdFailedToShowFullScreenContent: (ad, error) {
+        debugPrint(
+          'REWARDED: Failed to show '
+              '${error.code} - ${error.message}',
+        );
+
+        ad.dispose();
+
+        // تجهيز إعلان واحد جديد
+        _loadRewardedAd();
+      },
+    );
+
+    ad.show(
       onUserEarnedReward: (ad, reward) {
+        debugPrint(
+          'REWARDED: User earned '
+              '${reward.amount} ${reward.type}',
+        );
 
         if (!mounted) return;
+
         setState(() {
           _adWatched = true;
         });
@@ -1182,8 +1629,14 @@ class _CongratulationScreenState extends State<CongratulationScreen> {
 
                 if (!_adWatched)
                   ElevatedButton(
-                    onPressed: _rewardedAd == null ? null : _showAd,
-                    child: const Text('Watch Ad to Claim Coins'),
+                    onPressed: _isAdLoading
+                        ? null
+                        : _showAd,
+                    child: Text(
+                      _isAdLoading
+                          ? 'Loading Ad...'
+                          : 'Watch Ad to Claim Coins',
+                    ),
                   ),
 
                 if (_adWatched)

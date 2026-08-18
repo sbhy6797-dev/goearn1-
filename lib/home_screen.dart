@@ -171,9 +171,9 @@ class _HomeScreenState
       'boostEndTime': null,
 
       // Referral
-      'referralCode': user.uid
-          .substring(0, 8)
-          .toUpperCase(),
+      'referralCode': user.uid.length >= 8
+          ? user.uid.substring(0, 8).toUpperCase()
+          : user.uid.toUpperCase(),
 
       'usedReferral': false,
 
@@ -212,30 +212,28 @@ class _HomeScreenState
       Map<String, dynamic> data,
       User user,
       ) async {
-    final defaults =
-    defaultUserData(user);
+    final defaults = defaultUserData(user);
 
-    Map<String, dynamic> updates = {};
+    final Map<String, dynamic> updates = {};
 
     defaults.forEach((key, value) {
-      // Missing field
+      // =================================================
+      // IMPORTANT:
+      // NEVER change totalCoins for an existing user
+      // =================================================
+      if (key == 'totalCoins') {
+        return;
+      }
+
+      // Add only missing fields
       if (!data.containsKey(key)) {
         updates[key] = value;
         return;
       }
 
-      // Wrong type protection
-      final currentValue = data[key];
-
-      if (currentValue != null &&
-          value != null &&
-          currentValue.runtimeType !=
-              value.runtimeType) {
-        updates[key] = value;
-      }
+      // Do not overwrite existing values
     });
 
-    // Always update timestamps
     updates['lastUpdate'] =
         FieldValue.serverTimestamp();
 
@@ -370,30 +368,55 @@ class _HomeScreenState
         idToken: googleAuth.idToken,
       );
 
-      // ✅ حماية Firebase Auth
       final userCredential = await FirebaseAuth.instance
           .signInWithCredential(credential)
-          .timeout(const Duration(seconds: 12));
+          .timeout(const Duration(seconds: 15));
 
       final user = userCredential.user;
 
       if (user == null) return;
+
+      await user.getIdToken(true);
 
       await FirebaseCrashlytics.instance.setUserIdentifier(user.uid);
 
       final userRef =
       FirebaseFirestore.instance.collection('users').doc(user.uid);
 
-      // ✅ حماية Firestore
-      DocumentSnapshot doc;
+      DocumentSnapshot<Map<String, dynamic>> doc;
 
       try {
-        doc = await userRef.get().timeout(
-          const Duration(seconds: 10),
+        doc = await userRef.get(
+          const GetOptions(source: Source.server),
+        ).timeout(
+          const Duration(seconds: 15),
         );
-      } catch (_) {
-        await Future.delayed(const Duration(seconds: 1));
-        doc = await userRef.get();
+      } on FirebaseException catch (e, stack) {
+        debugPrint(
+          'FIRESTORE ERROR: ${e.code} - ${e.message}',
+        );
+
+        await FirebaseCrashlytics.instance.recordError(
+          e,
+          stack,
+          reason: 'Firestore user read: ${e.code}',
+          fatal: false,
+        );
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              e.code == 'permission-denied'
+                  ? 'Account access denied'
+                  : 'Unable to load your account',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+
+        return;
       }
 
       if (!doc.exists) {
@@ -417,14 +440,28 @@ class _HomeScreenState
 
       if (!mounted) return;
 
+      final freshDoc = await userRef.get();
+
+      final freshData = freshDoc.data();
+
+      final totalCoins =
+          (freshData?['totalCoins'] as num?)?.toInt() ?? 0;
+
+      if (!mounted) return;
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) => MainScreen(totalCoins: 0),
+          builder: (_) => MainScreen(
+            totalCoins: totalCoins,
+          ),
         ),
       );
 
     } on TimeoutException {
+
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Connection is slow, try again'),
